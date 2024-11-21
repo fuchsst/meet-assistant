@@ -117,7 +117,7 @@ class MeetingAssistantCLI:
     def _audio_callback(self, in_data, frame_count, time_info, status):
         """Process audio data from the stream."""
         if status:
-            logger.warning(f"Stream status: {status}")
+            logger.debug(f"Stream status: {status}")
         
         if self.is_recording:
             try:
@@ -188,27 +188,29 @@ class MeetingAssistantCLI:
             self.transcription_attempts += 1
             logger.debug(f"Starting transcription attempt {self.transcription_attempts}")
             
-            # Get transcription
+            # Get transcription with stricter parameters
             result = self.whisper.transcribe(
                 self.accumulated_audio,
                 language=self.language,
                 task=WHISPER_CONFIG["task"],
                 fp16=torch.cuda.is_available(),
                 temperature=0.0,
-                compression_ratio_threshold=2.0,
-                no_speech_threshold=0.3,
+                compression_ratio_threshold=1.5,  # Decreased to be more strict
+                no_speech_threshold=0.8,  # Increased further to be more strict about silence
                 condition_on_previous_text=True,
-                initial_prompt="Meeting transcription in progress."
+                initial_prompt=None  # Removed prompt to prevent bias
             )
             
             # Extract text
             text = result["text"].strip()
-            if text:
+            ignore_words = ["Thank you."]
+            if text and len(text) > 2 and text not in ignore_words:  # Only process if text is non-empty and longer than 2 chars and not halucinated
+
+
                 self.successful_transcriptions += 1
                 timestamp = datetime.now().strftime("%H:%M:%S")
                 formatted_text = f"[{timestamp}] {text}"
                 
-                #logger.info(f"Transcription: {formatted_text}")
                 # Print in green color
                 print(f"\033[32m{formatted_text}\033[0m")
                 
