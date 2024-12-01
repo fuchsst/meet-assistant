@@ -1,6 +1,7 @@
 """Configuration settings for the Meeting Assistant."""
 import os
 from pathlib import Path
+import json
 
 # Base directories
 BASE_DIR = Path(__file__).parent.parent
@@ -13,12 +14,35 @@ MODELS_DIR = BASE_DIR / "models"
 for directory in [DATA_DIR, MEETINGS_DIR, LOGS_DIR, MODELS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
+# Audio device settings file
+AUDIO_DEVICES_CONFIG = DATA_DIR / "audio_devices.json"
+
+# Default audio device settings
+DEFAULT_AUDIO_DEVICES = {
+    "input_devices": [],  # List of input device indices to record from
+    "output_devices": [], # List of output device names for loopback recording
+    "record_output": True # Flag to control output recording
+}
+
+# Load or create audio device settings
+if AUDIO_DEVICES_CONFIG.exists():
+    try:
+        with open(AUDIO_DEVICES_CONFIG, 'r') as f:
+            AUDIO_DEVICES = json.load(f)
+            # Ensure record_output exists in loaded config
+            if 'record_output' not in AUDIO_DEVICES:
+                AUDIO_DEVICES['record_output'] = True
+    except Exception:
+        AUDIO_DEVICES = DEFAULT_AUDIO_DEVICES
+else:
+    AUDIO_DEVICES = DEFAULT_AUDIO_DEVICES
+
 # Audio settings
 AUDIO_CONFIG = {
     "format": "wav",
     "channels": 1,  # Mono audio for better transcription
     "rate": 16000,  # Required sample rate for Whisper
-    "chunk": 1024*4,  # Reduced for more frequent processing
+    "chunk": 1024,  # Reduced chunk size for better overlap handling
     "sample_width": 2,  # 16-bit
     "silence_threshold": 100,  # Lowered to better detect speech
     "silence_duration": 0.5,   # Reduced to capture speech more quickly
@@ -27,11 +51,14 @@ AUDIO_CONFIG = {
     "min_gain_db": 0.0,    # Minimum gain in decibels
     "max_gain_db": 30.0,   # Maximum gain in decibels
     "default_gain_db": 15.0, # Increased for better speech detection
+    # Device settings
+    "devices": AUDIO_DEVICES
 }
+
 
 # Whisper settings
 WHISPER_CONFIG = {
-    "model_size": "turbo",  # options: tiny, base, small, medium, large, turbo
+    "model_size": "medium",  # options: tiny, base, small, medium, large, turbo
     "language": "en",  # Changed to auto-detect for better flexibility
     "task": "transcribe",
     "chunk_length": 30,  # seconds per chunk for better transcription

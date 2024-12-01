@@ -1,6 +1,5 @@
 streamlit>=1.40.1
 pyaudio>=0.2.14
-openai-whisper>=20240930
 crewai>=0.80.0
 git+https://github.com/SWivid/F5-TTS.git
 python-json-logger>=2.0.7
@@ -14,4 +13,13 @@ numpy>=1.24.0
 pyperclip>=1.9.0
 sounddevice>=0.5.1
 fire>=0.4.0
-keyboard>=0.13.5 
+keyboard>=0.13.5
+faster-whisper>=1.1.0
+pyannote.audio>=3.3.2
+transformers>=4.46.3
+torch>=2.2.0
+torchaudio>=2.2.0
+nltk>=3.9.1
+scipy>=1.14.1
+soundfile>=0.12.1
+termios 
