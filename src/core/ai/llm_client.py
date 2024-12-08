@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import time
 from crewai import Agent, Task, Crew, Process
-from crewai.tools import tool
 from crewai import LLM
 
 from config.config import LLM_CONFIG
@@ -25,40 +24,80 @@ class LLMClient:
             frequency_penalty=LLM_CONFIG["frequency_penalty"],
             presence_penalty=LLM_CONFIG["presence_penalty"]
         )
-        self.agents = self._create_agents()
+        # Initialize specialized agents
+        self.agents = {
+            "summarizer": Agent(
+                role="Meeting Summarizer",
+                goal="Create concise, accurate meeting summaries",
+                backstory="Expert in distilling key information from conversations",
+                llm=self.llm,
+                verbose=True
+            ),
+            "task_extractor": Agent(
+                role="Task Manager",
+                goal="Identify and organize action items and responsibilities",
+                backstory="Experienced project manager focused on task tracking",
+                llm=self.llm,
+                verbose=True
+            ),
+            "decision_tracker": Agent(
+                role="Decision Analyst",
+                goal="Track and document key decisions made during meetings",
+                backstory="Strategic analyst specializing in decision documentation",
+                llm=self.llm,
+                verbose=True
+            )
+        }
         
-    @tool("Text Analysis Tool")
     def analyze_text(self, text: str) -> str:
-        """Analyze text and return structured insights. Useful for extracting key information from text content."""
+        """Analyze text and return structured insights using CrewAI agents."""
         try:
-            # Create a prompt for the LLM to analyze the text
-            messages = [
-                {
-                    "role": "system",
-                    "content": """You are an expert meeting analyst. Analyze the provided text and extract:
-                    1. A concise summary of the main points
-                    2. Action items or tasks that were assigned
-                    3. Key decisions that were made
-                    Format your response as a JSON object with these three keys."""
-                },
-                {
-                    "role": "user",
-                    "content": f"Please analyze this meeting transcript:\n\n{text}"
-                }
-            ]
-            
-            # Get analysis from LLM
-            result = self.llm.call(messages)
+            # Create an analyst agent
+            analyst = Agent(
+                role="Meeting Analyst",
+                goal="Analyze meeting transcripts and extract key information",
+                backstory="""You are an expert meeting analyst with years of experience
+                in extracting valuable insights from conversations. You excel at identifying
+                main points, action items, and key decisions.""",
+                llm=self.llm,
+                verbose=True
+            )
+
+            # Create analysis task
+            analysis_task = Task(
+                description="""Analyze the provided meeting transcript and extract:
+                1. A concise summary of the main points
+                2. Action items or tasks that were assigned
+                3. Key decisions that were made
+                Format your response as a JSON object with these three keys.""",
+                expected_output="A JSON object containing summary, action_items, and decisions",
+                agent=analyst
+            )
+
+            # Create and run crew
+            crew = Crew(
+                agents=[analyst],
+                tasks=[analysis_task],
+                process=Process.sequential,
+                verbose=True
+            )
+
+            # Execute analysis
+            result = crew.kickoff(inputs={"transcript": text})
             
             # Ensure the result is valid JSON
             try:
-                json.loads(result)
-                return result
+                if isinstance(result, str):
+                    json.loads(result)
+                    return result
+                else:
+                    # If result is already a dict/object, convert to JSON string
+                    return json.dumps(result)
             except json.JSONDecodeError:
                 # If the result isn't valid JSON, try to extract and format it
                 logger.warning("LLM response was not valid JSON, attempting to format")
                 formatted_result = {
-                    "summary": result.split("Action items:")[0].strip(),
+                    "summary": str(result).split("Action items:")[0].strip(),
                     "action_items": [],
                     "decisions": []
                 }
@@ -69,64 +108,42 @@ class LLMClient:
             raise
 
     def execute_custom_task(self, transcript: str, task_description: str) -> str:
-        """Execute a custom analysis task on the transcript."""
+        """Execute a custom analysis task on the transcript using CrewAI."""
         try:
-            # Create a prompt for the custom task
-            messages = [
-                {
-                    "role": "system",
-                    "content": """You are an expert meeting analyst capable of performing custom analysis tasks. 
-                    Analyze the provided meeting transcript according to the specific task description.
-                    Provide a detailed response that directly addresses the task requirements."""
-                },
-                {
-                    "role": "user",
-                    "content": f"""Task: {task_description}
+            # Create a custom task agent
+            custom_agent = Agent(
+                role="Custom Task Analyst",
+                goal="Execute specific analysis tasks on meeting transcripts",
+                backstory="""You are a specialized analyst capable of performing
+                custom analysis tasks on meeting transcripts. You adapt your approach
+                based on the specific requirements of each task.""",
+                llm=self.llm,
+                verbose=True
+            )
 
-                    Meeting Transcript:
-                    {transcript}
+            # Create custom task
+            custom_task = Task(
+                description=task_description,
+                expected_output="A detailed response addressing the task requirements in English.",
+                agent=custom_agent
+            )
 
-                    Please analyze the transcript according to this specific task and answer in English."""
-                }
-            ]
+            # Create and run crew
+            crew = Crew(
+                agents=[custom_agent],
+                tasks=[custom_task],
+                process=Process.sequential,
+                verbose=True
+            )
+
+            # Execute task
+            result = crew.kickoff(inputs={"transcript": transcript})
             
-            # Get analysis from LLM
-            result = self.llm.call(messages)
-            
-            return result
+            return str(result)
             
         except Exception as e:
             logger.error(f"Custom task execution failed: {str(e)}")
             raise
-        
-    def _create_agents(self) -> Dict[str, Agent]:
-        """Create specialized agents for different analysis tasks."""
-        return {
-            "summarizer": Agent(
-                role="Meeting Summarizer",
-                goal="Create concise, accurate meeting summaries",
-                backstory="Expert in distilling key information from conversations",
-                tools=[self.analyze_text],
-                llm=self.llm,
-                verbose=True
-            ),
-            "task_extractor": Agent(
-                role="Task Manager",
-                goal="Identify and organize action items and responsibilities",
-                backstory="Experienced project manager focused on task tracking",
-                tools=[self.analyze_text],
-                llm=self.llm,
-                verbose=True
-            ),
-            "decision_tracker": Agent(
-                role="Decision Analyst",
-                goal="Track and document key decisions made during meetings",
-                backstory="Strategic analyst specializing in decision documentation",
-                tools=[self.analyze_text],
-                llm=self.llm,
-                verbose=True
-            )
-        }
 
     def analyze_transcript(self, transcript: str, max_retries: int = 3) -> Dict[str, Any]:
         """Analyze meeting transcript using multiple agents."""

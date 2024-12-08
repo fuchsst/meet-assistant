@@ -1,31 +1,30 @@
 # Meeting Assistant
 
-An intelligent meeting assistant that records, transcribes, and analyzes meetings in real-time using local Whisper transcription and F5-TTS for voice responses.
+An intelligent meeting assistant that records, transcribes, and analyzes meetings in real-time using local Whisper transcription and F5-TTS for voice responses. Features integration with Confluence and Jira for comprehensive document and task management.
 
 ## Features
 
 - **Real-time Audio Processing**
-  - Live meeting recording with PyAudio
+  - Multi-source audio recording (microphone and system audio)
   - Local Whisper-powered transcription
-  - Automatic transcript generation with timestamps
-  - Audio input/output monitoring
+  - Audio level monitoring and gain control
+  - Configurable input/output device selection
 
 - **AI-Powered Analysis**
-  - Meeting summaries
-  - Automatic task extraction
-  - Key decision tracking
-  - Custom analysis queries
+  - Meeting summaries and key points extraction
+  - Action item identification
+  - Task and timeline generation
+  - Integration with project documentation
 
-- **Interactive Interface**
-  - Streamlit-based user interface
-  - Real-time transcript display
-  - One-click analysis generation
-  - Task management system
+- **External Integrations**
+  - Confluence integration for documentation
+  - Jira integration for task management
+  - Web resource fetching
+  - Project context awareness
 
 - **Voice Capabilities**
   - Local F5-TTS integration
-  - Configurable voice settings
-  - Audio playback controls
+  - Multiple voice options
   - Voice response for analysis results
 
 ## Prerequisites
@@ -34,6 +33,7 @@ An intelligent meeting assistant that records, transcribes, and analyzes meeting
 - CUDA-capable GPU (recommended for Whisper)
 - Working microphone and speakers
 - Git (for cloning the repository)
+- Confluence and Jira access (optional)
 
 ## Installation
 
@@ -59,7 +59,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Download Whisper model (will be done automatically on first run, but you can pre-download):
+4. Download Whisper model:
 ```bash
 # Download medium model (recommended)
 python -c "import whisper; whisper.load_model('medium')"
@@ -67,177 +67,324 @@ python -c "import whisper; whisper.load_model('medium')"
 
 ## Configuration
 
-The application can be configured through `config/config.py`:
+### 1. Audio Device Setup
 
-```python
-# Audio settings
-AUDIO_CONFIG = {
-    "format": "wav",
-    "channels": 1,
-    "rate": 16000,
-    "chunk": 1024,
-    "sample_width": 2,
-}
+Run the audio configuration tool to select input/output devices:
 
-# Whisper settings
-WHISPER_CONFIG = {
-    "model_size": "medium",
-    "language": "en",
-    "task": "transcribe",
-}
+```bash
+python config_audio.py
+```
 
-# Voice settings
-VOICE_CONFIG = {
-    "speaker": "en_speaker_0",
-    "sample_rate": 16000,
-    "speed": 1.0,
-}
+Features:
+- Real-time audio level monitoring
+- Input device selection
+- Output device configuration
+- System audio capture setup
+
+### 2. External Services
+
+Configure external services in environment variables:
+
+```bash
+# Confluence settings
+CONFLUENCE_URL=https://your-instance.atlassian.net
+CONFLUENCE_USERNAME=your-email
+CONFLUENCE_API_TOKEN=your-api-token
+CONFLUENCE_CLOUD=true
+
+# Jira settings
+JIRA_URL=https://your-instance.atlassian.net
+JIRA_USERNAME=your-email
+JIRA_API_TOKEN=your-api-token
+JIRA_CLOUD=true
+```
+
+### 3. Project Configuration
+
+Projects are configured in `data/projects.yaml`. This file defines project metadata and integration settings for Confluence, Jira, and web resources.
+
+#### Basic Structure
+
+```yaml
+projects:
+  - name: "Project Name"          # Display name of the project
+    key: "PROJECT-KEY"           # Unique identifier (uppercase with hyphens)
+    description: "Description"    # Brief project description
+    members:                     # Optional: Team member details
+      - name: "John Doe"
+        role: "Project Manager"
+        user_names:             # Identifiers across different systems
+          - "johndoe"           # Username
+          - "john@example.com"  # Email
+          - "JD123"            # Employee ID
+```
+
+#### Integration Configuration
+
+##### Confluence Integration
+```yaml
+    confluence:
+      space: "SPACE-KEY"         # Confluence space key
+      pages:                     # Pages to track
+        - title: "Requirements"  # Page title for reference
+          id: "123456"          # Confluence page ID
+        - title: "Architecture"
+          id: "123457"
+```
+
+##### Jira Integration
+```yaml
+    jira:
+      epics:                     # Epics to track
+        - title: "Phase 1"       # Epic title for reference
+          id: "PROJ-123"        # Jira epic key
+        - title: "Phase 2"
+          id: "PROJ-456"
+```
+
+##### Web Resources
+```yaml
+    web:                         # External web resources
+      - title: "API Docs"        # Resource title
+        url: "https://api.example.com/docs"
+      - title: "Wiki"
+        url: "https://wiki.example.com"
+```
+
+#### Complete Example
+
+Here's a complete example of a project configuration:
+
+```yaml
+projects:
+  - name: "Customer Portal"
+    key: "PORTAL"
+    description: "Customer self-service portal development"
+    members:
+      - name: "Jane Smith"
+        role: "Tech Lead"
+        user_names:
+          - "jsmith"
+          - "jane.smith@company.com"
+          - "JS789"
+      - name: "Mike Johnson"
+        role: "Developer"
+        user_names:
+          - "mjohnson"
+          - "mike.j@company.com"
+          - "MJ456"
+    
+    confluence:
+      space: "PORTAL"
+      pages:
+        - title: "Requirements Specification"
+          id: "987654"
+        - title: "Technical Design"
+          id: "987655"
+        - title: "API Documentation"
+          id: "987656"
+    
+    jira:
+      epics:
+        - title: "User Authentication"
+          id: "PORTAL-100"
+        - title: "Dashboard Development"
+          id: "PORTAL-101"
+        - title: "Payment Integration"
+          id: "PORTAL-102"
+    
+    web:
+      - title: "Design System"
+        url: "https://design.company.com"
+      - title: "API Reference"
+        url: "https://api.company.com/docs"
+      - title: "Style Guide"
+        url: "https://style.company.com"
+```
+
+#### Configuration Guidelines
+
+1. **Project Keys**
+   - Use uppercase letters, numbers, and hyphens
+   - Start with a letter
+   - Keep it short but meaningful
+   - Examples: `PORTAL`, `CRM-API`, `HR-SYSTEM`
+
+2. **Member Configuration**
+   - Include all relevant usernames/emails
+   - Use consistent role names
+   - Add system-specific IDs if available
+
+3. **Confluence Integration**
+   - Use space keys from your Confluence instance
+   - Get page IDs from page URLs or page info
+   - Include key documentation pages only
+
+4. **Jira Integration**
+   - Use epic keys from your Jira instance
+   - Include epics that are actively being worked on
+   - Update as new epics are created
+
+5. **Web Resources**
+   - Include only stable, long-term resources
+   - Use descriptive titles
+   - Ensure URLs are accessible to team members
+
+#### Schema Validation
+
+A JSON schema for validating the configuration is available at `config/projects_schema.json`. You can use tools like `yamllint` or `jsonschema` to validate your configuration:
+
+```bash
+# Install validation tool
+pip install yamllint jsonschema
+
+# Validate configuration
+python -c "import yaml, jsonschema; schema = json.load(open('config/projects_schema.json')); config = yaml.safe_load(open('data/projects.yaml')); jsonschema.validate(config, schema)"
 ```
 
 ## Usage
 
-1. Start the application:
+### 1. Recording Meetings
+
+Use the recording CLI tool:
+
 ```bash
-streamlit run app.py
+python recorder_cli.py --title "Meeting Title" [options]
+
+Options:
+  --output-alias TEXT   Alias for output audio (default: "Team")
+  --input-alias TEXT    Alias for input audio (default: "Me")
+  --save-interval INT   Save interval in seconds (default: 30)
 ```
 
-2. Create a New Meeting:
-   - Click "New Meeting" in the sidebar
-   - Fill in meeting details (title, participants)
-   - Click "Start Recording" when ready
+Controls:
+- Press Enter to start/stop recording
+- Audio is automatically saved every 30 seconds
+- Multiple recordings can be made in one session
+- Press Ctrl+C to exit
 
-3. During the Meeting:
-   - View real-time transcription
-   - Monitor audio levels
-   - Track meeting duration
+### 2. Transcribing Recordings
 
-4. Analysis Features:
-   - Generate meeting minutes
-   - Extract action items
-   - Identify key decisions
-   - Ask custom analysis questions
+Use the transcription CLI tool:
 
-5. Export Options:
-   - Copy to clipboard
-   - Download as markdown
-   - Save audio recordings
-
-## Voice Commands
-
-You can interact with the assistant using voice commands:
-
-1. Custom Analysis:
-   - Click the microphone icon
-   - Ask your question (e.g., "Summarize the key points about the project timeline")
-   - The assistant will respond with both text and voice
-
-2. Task Management:
-   - Use voice commands to create tasks
-   - Ask for task summaries
-   - Update task status
-
-## Development
-
-### Project Structure
-```
-meeting_assistant/
-├── app.py              # Main Streamlit application
-├── config/            # Configuration files
-├── src/
-│   ├── core/          # Core functionality
-│   │   ├── audio/     # Audio processing
-│   │   ├── ai/        # AI components
-│   │   └── storage/   # File management
-│   └── pages/         # UI components
-└── tests/             # Test suites
-```
-
-### Running Tests
-
-Run the complete test suite:
 ```bash
-pytest tests/
+python transcribe_cli.py [options] INPUT_PATH [OUTPUT_PATH]
+
+Options:
+  --language TEXT    Language code (default: "en")
+  INPUT_PATH        Path to WAV file or directory
+  OUTPUT_PATH       Optional output path for VTT files
 ```
 
-Run specific test categories:
+Features:
+- Supports single file or batch processing
+- Multiple language support
+- Automatic timestamp generation
+- Progress tracking
+
+### 3. Processing Transcripts
+
+Process transcripts with AI analysis:
+
 ```bash
-pytest tests/test_audio.py        # Audio tests
-pytest tests/test_transcription.py # Transcription tests
-pytest tests/test_analysis.py     # Analysis tests
-pytest -m integration            # Integration tests
-pytest -m performance           # Performance tests
+python process_transcript.py [options] MEETING_DIR
+
+Options:
+  --project-config TEXT   Path to project config YAML
+  --context-window INT    Context window size (default: 5)
 ```
 
-### Contributing
+Features:
+- Combines multiple VTT files
+- Generates meeting summaries
+- Extracts action items
+- Creates markdown reports
+- Integrates project context
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests
-5. Submit a pull request
+### 4. Main Application
+
+Launch the Streamlit interface:
+
+```bash
+streamlit run src/streamlit/app.py
+```
+
+Features:
+- Project and meeting management
+- Real-time transcription display
+- Meeting analysis and summaries
+- Task and ticket creation
+- Document integration
+
+## Common Workflows
+
+### 1. Quick Meeting Recording
+
+1. Configure audio devices:
+   ```bash
+   python config_audio.py
+   ```
+
+2. Start recording:
+   ```bash
+   python recorder_cli.py --title "Quick Meeting"
+   ```
+
+3. Process the recording:
+   ```bash
+   python transcribe_cli.py data/meetings/latest/
+   python process_transcript.py data/meetings/latest/
+   ```
+
+### 2. Project Meeting
+
+1. Set up project configuration in `data/projects.yaml`
+
+2. Start the main application:
+   ```bash
+   streamlit run src/streamlit/app.py
+   ```
+
+3. Select project and start meeting
+
+4. Use integrated tools for:
+   - Meeting preparation
+   - Real-time recording
+   - Task generation
+   - Document integration
 
 ## Troubleshooting
 
-### Common Issues
+### Audio Issues
 
-1. Audio Recording:
-   - Check microphone permissions
+1. No audio devices detected:
+   - Run `python config_audio.py` to verify device detection
+   - Check system permissions
    - Verify PyAudio installation
-   - Test audio input levels
 
-2. Transcription:
-   - Ensure Whisper model is downloaded
-   - Check GPU availability
-   - Verify audio quality
+2. Poor recording quality:
+   - Adjust input gain in config_audio.py
+   - Check microphone positioning
+   - Verify sample rate settings
 
-3. Analysis:
-   - Check file permissions
-   - Verify file structure
-   - Monitor memory usage
+### Transcription Issues
 
-### Error Messages
+1. GPU memory errors:
+   - Reduce Whisper model size
+   - Free up GPU memory
+   - Switch to CPU processing
 
-- `PortAudioError`: Check audio device connections
-- `FileNotFoundError`: Verify file paths and permissions
-- `CUDA out of memory`: Reduce model size or batch size
-
-## Performance Tips
-
-1. GPU Optimization:
-   - Use CUDA-capable GPU
-   - Monitor GPU memory usage
-   - Adjust model size if needed
-
-2. Audio Processing:
-   - Optimize chunk size
-   - Monitor buffer overflow
-   - Handle silence efficiently
-
-3. File Management:
-   - Regular cleanup of old files
-   - Implement backup strategy
-   - Monitor disk usage
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- OpenAI Whisper team
-- F5-TTS developers
-- Streamlit community
-- CrewAI framework
+2. Language detection issues:
+   - Specify language explicitly
+   - Check audio quality
+   - Verify Whisper model size
 
 ## Support
 
 - Create an issue for bugs
-- Join our Discord community
-- Check the FAQ in the wiki
+- Check documentation in docs/
+- Review logs in logs/
 
-## Version History
+## License
 
-- 1.0.0
-  - Initial release
-  - Core functionality implementation
-  - Basic UI and analysis features
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

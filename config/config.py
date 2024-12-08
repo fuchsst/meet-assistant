@@ -14,8 +14,29 @@ MODELS_DIR = BASE_DIR / "models"
 for directory in [DATA_DIR, MEETINGS_DIR, LOGS_DIR, MODELS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
+# Document fetcher settings
+CONFLUENCE_CONFIG = {
+    "url": os.getenv("CONFLUENCE_URL"),
+    "username": os.getenv("CONFLUENCE_USERNAME"),
+    "password": os.getenv("CONFLUENCE_API_TOKEN"),  # API token for cloud, password for server
+    "cloud": os.getenv("CONFLUENCE_CLOUD", "true").lower() == "true"
+}
+
+JIRA_CONFIG = {
+    "url": os.getenv("JIRA_URL"),
+    "username": os.getenv("JIRA_USERNAME"),
+    "password": os.getenv("JIRA_API_TOKEN"),  # API token for cloud, password for server
+    "cloud": os.getenv("JIRA_CLOUD", "true").lower() == "true"
+}
+
+WEB_CONFIG = {
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.1",
+    "timeout": 30,  # seconds
+    "max_retries": 3
+}
+
 # Audio device settings file
-AUDIO_DEVICES_CONFIG = DATA_DIR / "audio_devices.json"
+AUDIO_DEVICES_CONFIG = DATA_DIR / "audio_devices.yaml"
 
 # Default audio device settings
 DEFAULT_AUDIO_DEVICES = {
@@ -86,13 +107,6 @@ WHISPER_CONFIG = {
     }
 }
 
-# File patterns
-FILE_PATTERNS = {
-    "audio": "audio.wav",
-    "transcript": "transcript.txt",
-    "analysis": "analysis.json",
-    "metadata": "metadata.json",
-}
 
 # Logging configuration
 LOGGING_CONFIG = {
@@ -185,7 +199,7 @@ LLM_CONFIG = {
     "provider": "anthropic",  # The LLM provider to use
     "model": "claude-3-5-sonnet-20241022",  # The model to use
     "temperature": 0.7,  # Controls randomness in responses
-    "max_tokens": 1000,  # Maximum length of generated responses
+    "max_tokens": 8192,  # Maximum length of generated responses
     "top_p": 0.9,  # Controls diversity in responses
     "frequency_penalty": 0.0,  # Reduces repetition of token sequences
     "presence_penalty": 0.0,  # Reduces repetition of topics

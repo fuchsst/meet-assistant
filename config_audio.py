@@ -5,7 +5,7 @@ import numpy as np
 import time
 import sys
 import threading
-import json
+import yaml
 import keyboard
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Set
@@ -60,7 +60,7 @@ class AudioDeviceSelector:
         if AUDIO_DEVICES_CONFIG.exists():
             try:
                 with open(AUDIO_DEVICES_CONFIG, 'r') as f:
-                    config = json.load(f)
+                    config = yaml.safe_load(f)
                     # Ensure record_output exists
                     if 'record_output' not in config:
                         config['record_output'] = True
@@ -92,7 +92,7 @@ class AudioDeviceSelector:
         try:
             AUDIO_DEVICES_CONFIG.parent.mkdir(parents=True, exist_ok=True)
             with open(AUDIO_DEVICES_CONFIG, 'w') as f:
-                json.dump(config, f, indent=2)
+                yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
             print(f"\nConfiguration saved to {AUDIO_DEVICES_CONFIG}")
         except Exception as e:
             print(f"\nError saving configuration: {e}")

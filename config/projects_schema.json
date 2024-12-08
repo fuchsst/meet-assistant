@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Projects Configuration",
+  "description": "Schema for configuring project metadata and integrations",
+  "type": "object",
+  "required": ["projects"],
+  "properties": {
+    "projects": {
+      "type": "array",
+      "description": "List of project configurations",
+      "items": {
+        "type": "object",
+        "required": ["name", "key", "description"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Display name of the project"
+          },
+          "key": {
+            "type": "string",
+            "description": "Unique identifier for the project",
+            "pattern": "^[A-Z][A-Z0-9-]+$"
+          },
+          "description": {
+            "type": "string",
+            "description": "Brief description of the project"
+          },
+          "members": {
+            "type": "array",
+            "description": "List of project team members",
+            "items": {
+              "type": "object",
+              "required": ["name", "role", "user_names"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Full name of the team member"
+                },
+                "role": {
+                  "type": "string",
+                  "description": "Role of the team member in the project"
+                },
+                "user_names": {
+                  "type": "array",
+                  "description": "List of usernames/identifiers across different systems",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "confluence": {
+            "type": "object",
+            "description": "Confluence integration settings",
+            "required": ["space", "pages"],
+            "properties": {
+              "space": {
+                "type": "string",
+                "description": "Confluence space key"
+              },
+              "pages": {
+                "type": "array",
+                "description": "List of Confluence pages to track",
+                "items": {
+                  "type": "object",
+                  "required": ["title", "id"],
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "description": "Title of the Confluence page"
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Confluence page ID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "jira": {
+            "type": "object",
+            "description": "Jira integration settings",
+            "required": ["epics"],
+            "properties": {
+              "epics": {
+                "type": "array",
+                "description": "List of Jira epics to track",
+                "items": {
+                  "type": "object",
+                  "required": ["title", "id"],
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "description": "Title of the Jira epic"
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Jira epic ID/key"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "web": {
+            "type": "array",
+            "description": "List of web resources",
+            "items": {
+              "type": "object",
+              "required": ["title", "url"],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Title of the web resource"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "URL of the web resource",
+                  "format": "uri"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -22,4 +22,5 @@ torchaudio>=2.2.0
 nltk>=3.9.1
 scipy>=1.14.1
 soundfile>=0.12.1
-termios 
+fire>=0.7.0
+atlassian-python-api>=3.41.16 
