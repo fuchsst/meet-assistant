@@ -12,6 +12,8 @@ import re
 import yaml
 import shutil
 
+from src.core.storage.metadata_manager import UnifiedMetadataManager
+
 # Set up logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -50,22 +52,31 @@ class AudioDeviceDetector:
             inputs = []
             outputs = []
             current_list = None
+            in_audio_devices = False
             
             for line in lines:
                 if 'DirectShow audio devices' in line:
+                    in_audio_devices = True
                     current_list = inputs
-                elif 'DirectShow video devices' in line:
-                    break
-                elif current_list is not None and ']  "' in line:
+                    continue
+                elif in_audio_devices and ']  "' in line:
+                    # Extract device name between quotes
                     device_name = line.split('"')[1]
-                    current_list.append({
+                    # Extract alternative name if present
+                    alt_name = None
+                    if "Alternative name" in line:
+                        alt_name = line.split('"')[3]
+                    
+                    device = {
                         'name': device_name,
-                        'id': device_name,
+                        'id': alt_name if alt_name else device_name,
                         'interface': 'dshow'
-                    })
+                    }
+                    current_list.append(device)
             
             # For Windows, outputs are also inputs
             outputs = inputs.copy()
+            
             logger.info(f"Detected {len(inputs)} input devices and {len(outputs)} output devices")
             return inputs, outputs
             
@@ -177,7 +188,7 @@ class AudioRecorder:
         self.input_devices, self.output_devices = AudioDeviceDetector.get_device_list()
         logger.info(f"Detected {len(self.input_devices)} input devices and {len(self.output_devices)} output devices")
         
-        if not self.input_devices or not self.output_devices:
+        if not self.input_devices:
             logger.error("No audio devices detected")
             raise RuntimeError("No audio devices detected")
             
@@ -207,12 +218,30 @@ class AudioRecorder:
                 '-i', f':{self.input_device["id"]}:{self.output_device["id"]}'
             ]
         else:  # Windows
-            input_args = [
-                '-f', 'dshow',
-                '-i', f'audio={self.input_device["id"]}',
-                '-f', 'dshow',
-                '-i', f'audio={self.output_device["id"]}'
-            ]
+            # Find Stereo Mix or similar loopback device
+            stereo_mix = None
+            for device in self.input_devices:
+                if any(name.lower() in device['name'].lower() 
+                      for name in ['speaker', 'headphone', 'headset', 'output', 'hdmi', 'display audio', 'digital audio', 'stereo mix', 'stereomix', 'wave out', 'what u hear', 'loopback']):
+                    stereo_mix = device
+                    break
+            
+            if stereo_mix:
+                logger.info(f"Found system audio output device: {stereo_mix['name']}")
+                input_args = [
+                    '-f', 'dshow',
+                    '-i', f'audio={self.input_device["id"]}',  # Microphone
+                    '-f', 'dshow',
+                    '-i', f'audio={stereo_mix["id"]}'  # System audio
+                ]
+            else:
+                logger.warning("No system audio output device found, recording microphone only")
+                input_args = [
+                    '-f', 'dshow',
+                    '-i', f'audio={self.input_device["id"]}',  # Microphone
+                    '-f', 'lavfi',
+                    '-i', 'anullsrc'  # Null audio source as placeholder
+                ]
 
         # Output format settings
         output_settings = [
@@ -297,36 +326,67 @@ class AudioRecorder:
 class RecordingSession:
     """Manages a recording session."""
     
-    def __init__(self, title: str, output_dir: Path):
+    def __init__(self, title: str, project_id: str, metadata_manager: UnifiedMetadataManager):
         self.title = title
-        self.output_dir = output_dir
-        logger.info(f"Initializing RecordingSession with title: {title}")
-        logger.debug(f"Output directory: {output_dir}")
+        self.project_id = project_id
+        self.metadata_manager = metadata_manager
         
-        self.session_file = self._generate_session_filename()
-        logger.info(f"Generated session filename: {self.session_file}")
-        
-        self.recorder = AudioRecorder(output_dir, self.session_file)
-        
-    def _generate_session_filename(self) -> Path:
-        """Generate unique session filename."""
+        # Generate meeting directory name using date and slugified title
         date_str = datetime.now().strftime("%Y%m%d")
         title_slug = slugify(self.title)
+        self.meeting_dir_name = f"{date_str}_{title_slug}"
         
-        # Find next available sequence number
-        seq = 1
+        logger.info(f"Initializing RecordingSession with title: {title}")
+        
+        # Get meeting directory - use metadata_manager's get_meeting_dir method
+        self.meeting_dir = self.metadata_manager.get_meeting_dir(self.project_id, self.meeting_dir_name)
+        logger.debug(f"Meeting directory: {self.meeting_dir}")
+        
+        # Create meeting directory
+        self.meeting_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate recording filename with index
+        self.session_file = self._generate_recording_filename()
+        logger.debug(f"Recording file: {self.session_file}")
+        
+        # Initialize meeting metadata
+        self.meeting_id = self.metadata_manager.generate_meeting_id()
+        self.metadata_manager.update_meeting_metadata(
+            project_id=self.project_id,
+            meeting_id=self.meeting_id,
+            metadata={
+                "title": self.title,
+                "status": "recording",
+                "start_time": datetime.utcnow().isoformat(),
+                "recording_file": str(self.session_file.relative_to(self.metadata_manager.data_dir))
+            }
+        )
+        
+        # Initialize recorder
+        self.recorder = AudioRecorder(self.meeting_dir, self.session_file)
+    
+    def _generate_recording_filename(self) -> Path:
+        """Generate unique recording filename with index."""
+        index = 1
         while True:
-            filename = f"{date_str}_{title_slug}_{seq:03d}.wav"
-            file_path = self.output_dir / filename
+            filename = f"recording_{index:03d}.wav"
+            file_path = self.meeting_dir / filename
             if not file_path.exists():
                 return file_path
-            seq += 1
+            index += 1
         
     def start(self) -> bool:
         """Start the recording session."""
         try:
             logger.info("Starting recording session")
-            return self.recorder.start_recording()
+            success = self.recorder.start_recording()
+            if success:
+                self.metadata_manager.update_meeting_metadata(
+                    project_id=self.project_id,
+                    meeting_id=self.meeting_id,
+                    metadata={"status": "recording"}
+                )
+            return success
         except Exception as e:
             logger.error(f"Failed to start session: {e}")
             return False
@@ -335,7 +395,17 @@ class RecordingSession:
         """Stop the recording session."""
         try:
             logger.info("Stopping recording session")
-            return self.recorder.stop_recording()
+            success = self.recorder.stop_recording()
+            if success:
+                self.metadata_manager.update_meeting_metadata(
+                    project_id=self.project_id,
+                    meeting_id=self.meeting_id,
+                    metadata={
+                        "status": "recorded",
+                        "end_time": datetime.utcnow().isoformat()
+                    }
+                )
+            return success
         except Exception as e:
             logger.error(f"Failed to stop session: {e}")
             return False
@@ -349,32 +419,28 @@ class RecorderCLI:
         project_id: Optional[str] = None,
     ):
         self.title = title
+        self.metadata_manager = UnifiedMetadataManager()
+        
+        # If no project_id provided, get from metadata manager
+        if not project_id:
+            try:
+                project = self.metadata_manager.get_project()
+                project_id = project["key"]
+            except ValueError as e:
+                logger.error(f"Failed to get default project: {e}")
+                raise
+        
         self.project_id = project_id
         logger.info(f"Initializing RecorderCLI with title: {title}, project_id: {project_id}")
         
-        self.output_dir = self.get_meeting_dir(project_id)
-        logger.info(f"Output directory: {self.output_dir}")
-        
         self.session: Optional[RecordingSession] = None
-        
-        # Ensure output directory exists
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Ensured output directory exists: {self.output_dir}")
-        
-    def get_meeting_dir(self, project_id: Optional[str] = None) -> Path:
-        """Get the directory for storing meeting recordings."""
-        base_dir = Path("data")
-        date_str = datetime.now().strftime("%Y%m%d")
-        if project_id:
-            return base_dir / f"{project_id}/meetings"
-        return base_dir / f"{date_str}_default/meetings"
         
     def _print_welcome_message(self):
         """Print welcome message with instructions."""
         print(f"""Audio Recording CLI
 
 Session: {self.title}
-Output Directory: {self.output_dir}
+Project: {self.project_id}
 
 - Press Ctrl+C to exit
 """)
@@ -385,23 +451,43 @@ Output Directory: {self.output_dir}
         self._print_welcome_message()
         
         try:
-            if not self.session:
-                logger.info("Starting new recording")
-                print("Starting new recording...")
-                self.session = RecordingSession(self.title, self.output_dir)
-                if self.session.start():
-                    print(f"Recording to: {self.session.session_file.name}")
-                    print("Press Enter to stop recording.")
-                else:
-                    logger.error("Failed to start recording")
-                    print("Failed to start recording.")
+            while True:
+                try:
+                    if not self.session:
+                        logger.info("Starting new recording")
+                        print("Starting new recording...")
+                        self.session = RecordingSession(
+                            title=self.title,
+                            project_id=self.project_id,
+                            metadata_manager=self.metadata_manager
+                        )
+                        if self.session.start():
+                            print(f"Recording to: {self.session.session_file.name}")
+                            print("Press Enter to stop recording or Ctrl+C to exit.")
+                            # Wait for user input
+                            input()
+                            print("Stopping recording...")
+                            self.session.stop()
+                            self.session = None
+                            print("Recording stopped. Press Enter to start a new recording or Ctrl+C to exit.")
+                            input()
+                        else:
+                            logger.error("Failed to start recording")
+                            print("Failed to start recording.")
+                            self.session = None
+                            break
+                    
+                    # Small sleep to avoid tight loop
+                    time.sleep(0.1)
+                        
+                except Exception as e:
+                    logger.error(f"Error during recording: {e}")
+                    print(f"An error occurred: {e}")
+                    if self.session and self.session.recorder.recording:
+                        print("Attempting to stop recording...")
+                        self.session.stop()
                     self.session = None
-            else:
-                logger.info("Stopping current recording")
-                print("Stopping recording...")
-                self.session.stop()
-                self.session = None
-                print("Recording stopped. Press Enter to start a new recording.")
+                    time.sleep(1)  # Wait a bit before retrying
                         
         except KeyboardInterrupt:
             logger.info("Received KeyboardInterrupt, exiting")
