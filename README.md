@@ -33,6 +33,7 @@ An intelligent meeting assistant that records, transcribes, and analyzes meeting
 - CUDA-capable GPU (recommended for Whisper)
 - Working microphone and speakers
 - Git (for cloning the repository)
+- FFmpeg (for audio recording)
 - Confluence and Jira access (optional)
 
 ## Installation
@@ -59,7 +60,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Download Whisper model:
+4. Install FFmpeg:
+   - Windows: Download from [FFmpeg official website](https://ffmpeg.org/download.html) and add to PATH
+   - macOS: `brew install ffmpeg`
+   - Linux: `sudo apt-get install ffmpeg` (Ubuntu/Debian) or `sudo yum install ffmpeg` (CentOS/RHEL)
+
+5. Download Whisper model:
 ```bash
 # Download medium model (recommended)
 python -c "import whisper; whisper.load_model('medium')"
@@ -249,19 +255,27 @@ python -c "import yaml, jsonschema; schema = json.load(open('config/projects_sch
 Use the recording CLI tool:
 
 ```bash
-python recorder_cli.py --title "Meeting Title" [options]
+python recorder_cli.py --title "Meeting Title" [--project-id PROJECT_ID]
 
-Options:
-  --output-alias TEXT   Alias for output audio (default: "Team")
-  --input-alias TEXT    Alias for input audio (default: "Me")
-  --save-interval INT   Save interval in seconds (default: 30)
+Arguments:
+  --title TEXT        Recording session title (required)
+  --project-id TEXT   Optional project ID (uses default project if not provided)
 ```
 
+Features:
+- Automatically detects available audio input and output devices
+- Records both microphone input and system audio output
+- Saves recordings as WAV files in the project's meeting directory
+- Supports multiple recording sessions within the same run
+
 Controls:
-- Press Enter to start/stop recording
-- Audio is automatically saved every 30 seconds
-- Multiple recordings can be made in one session
-- Press Ctrl+C to exit
+- Press Enter to start a new recording
+- Press Ctrl+C to exit the program
+
+Output:
+- Recordings are saved in `data/PROJECT_ID/meetings/` if a project ID is provided
+- If no project ID is provided, recordings are saved in `data/YYYYMMDD_default/meetings/`
+- Filenames follow the format: `YYYYMMDD_meeting_title_001.wav`
 
 ### 2. Transcribing Recordings
 
@@ -320,52 +334,55 @@ Features:
 
 ### 1. Quick Meeting Recording
 
-1. Configure audio devices:
-   ```bash
-   python config_audio.py
-   ```
+1. Configure audio devices (automatic)
 
 2. Start recording:
    ```bash
    python recorder_cli.py --title "Quick Meeting"
    ```
 
-3. Process the recording:
+3. Press Enter to start/stop recordings as needed
+
+4. Press Ctrl+C to exit when done
+
+5. Process the recording:
    ```bash
-   python transcribe_cli.py data/meetings/latest/
-   python process_transcript.py data/meetings/latest/
+   python transcribe_cli.py data/YYYYMMDD_default/meetings/
+   python process_transcript.py data/YYYYMMDD_default/meetings/
    ```
 
 ### 2. Project Meeting
 
 1. Set up project configuration in `data/projects.yaml`
 
-2. Start the main application:
+2. Start recording with project ID:
    ```bash
-   streamlit run src/streamlit/app.py
+   python recorder_cli.py --title "Project Meeting" --project-id YOUR_PROJECT_ID
    ```
 
-3. Select project and start meeting
+3. Press Enter to start/stop recordings as needed
 
-4. Use integrated tools for:
-   - Meeting preparation
-   - Real-time recording
-   - Task generation
-   - Document integration
+4. Press Ctrl+C to exit when done
+
+5. Process the recording:
+   ```bash
+   python transcribe_cli.py data/YOUR_PROJECT_ID/meetings/
+   python process_transcript.py data/YOUR_PROJECT_ID/meetings/
+   ```
 
 ## Troubleshooting
 
 ### Audio Issues
 
 1. No audio devices detected:
-   - Run `python config_audio.py` to verify device detection
-   - Check system permissions
+   - Ensure FFmpeg is installed and in the system PATH
+   - Check system permissions for audio access
    - Verify PyAudio installation
 
 2. Poor recording quality:
-   - Adjust input gain in config_audio.py
-   - Check microphone positioning
-   - Verify sample rate settings
+   - Check microphone and speaker settings in your operating system
+   - Ensure both input and output devices are correctly selected
+   - Try different audio input/output devices if available
 
 ### Transcription Issues
 
