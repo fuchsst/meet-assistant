@@ -4,11 +4,24 @@ An intelligent meeting assistant that records, transcribes, and analyzes meeting
 
 ## Features
 
-- **Real-time Audio Processing**
-  - Multi-source audio recording (microphone and system audio)
-  - Local Whisper-powered transcription
-  - Audio level monitoring and gain control
-  - Configurable input/output device selection
+- **Audio Recording**
+  - Multi-platform support (Windows, macOS, Linux)
+  - Simultaneous microphone and system audio capture
+  - Automatic audio device detection and configuration
+  - Session-based recording with metadata tracking
+  - Interactive recording controls
+  - Project-based organization
+  - Real-time audio level monitoring
+
+- **Audio Transcription**
+  - Local Whisper-powered transcription with GPU acceleration
+  - Multi-language support
+  - VTT output format with timestamps
+  - Batch processing capabilities
+  - Real-time file monitoring
+  - Progress tracking with metadata
+  - Interactive meeting selection
+  - Project and meeting organization
 
 - **AI-Powered Analysis**
   - Meeting summaries and key points extraction
@@ -71,21 +84,62 @@ pip install -r requirements.txt
 python -c "import whisper; whisper.load_model('medium')"
 ```
 
+## Usage
+
+### Recording Meetings
+
+Use the recording CLI tool:
+
+```bash
+python recorder_cli.py --title "Meeting Title" [--project-id PROJECT_ID]
+
+Arguments:
+  --title TEXT        Recording session title (required)
+  --project-id TEXT   Optional project ID (uses default project if not provided)
+```
+
+Features:
+- Automatic audio device detection
+- Records both microphone and system audio
+- Session-based recording with metadata
+- Interactive controls:
+  - Press Enter to start/stop recording
+  - Press Ctrl+C to exit
+- Automatic file naming and organization
+- Project-based storage structure
+
+### Transcribing Recordings
+
+Use the transcription CLI tool:
+
+```bash
+python transcribe_cli.py [options] [MEETING_ID] [--project-id PROJECT_ID]
+
+Options:
+  --meeting-id TEXT   Meeting ID or directory (optional, interactive selection if not provided)
+  --project-id TEXT   Project ID (uses default if not provided)
+  --language TEXT     Language code (default: "en")
+  --monitor          Monitor directory for new recordings
+```
+
+Features:
+- GPU-accelerated Whisper transcription
+- Multi-language support
+- VTT output format with timestamps
+- Interactive meeting selection
+- Real-time file monitoring option
+- Batch processing of multiple recordings
+- Progress tracking with metadata
+
 ## Configuration
 
 ### 1. Audio Device Setup
 
-Run the audio configuration tool to select input/output devices:
-
-```bash
-python config_audio.py
-```
-
-Features:
-- Real-time audio level monitoring
-- Input device selection
-- Output device configuration
-- System audio capture setup
+Audio devices are automatically detected and configured by the recorder CLI. The system will:
+- Detect available input/output devices
+- Configure appropriate audio sources
+- Handle platform-specific audio setups
+- Support system audio capture where available
 
 ### 2. External Services
 
@@ -247,154 +301,6 @@ pip install yamllint jsonschema
 # Validate configuration
 python -c "import yaml, jsonschema; schema = json.load(open('config/projects_schema.json')); config = yaml.safe_load(open('data/projects.yaml')); jsonschema.validate(config, schema)"
 ```
-
-## Usage
-
-### 1. Recording Meetings
-
-Use the recording CLI tool:
-
-```bash
-python recorder_cli.py --title "Meeting Title" [--project-id PROJECT_ID]
-
-Arguments:
-  --title TEXT        Recording session title (required)
-  --project-id TEXT   Optional project ID (uses default project if not provided)
-```
-
-Features:
-- Automatically detects available audio input and output devices
-- Records both microphone input and system audio output
-- Saves recordings as WAV files in the project's meeting directory
-- Supports multiple recording sessions within the same run
-
-Controls:
-- Press Enter to start a new recording
-- Press Ctrl+C to exit the program
-
-Output:
-- Recordings are saved in `data/PROJECT_ID/meetings/` if a project ID is provided
-- If no project ID is provided, recordings are saved in `data/YYYYMMDD_default/meetings/`
-- Filenames follow the format: `YYYYMMDD_meeting_title_001.wav`
-
-### 2. Transcribing Recordings
-
-Use the transcription CLI tool:
-
-```bash
-python transcribe_cli.py [options] INPUT_PATH [OUTPUT_PATH]
-
-Options:
-  --language TEXT    Language code (default: "en")
-  INPUT_PATH        Path to WAV file or directory
-  OUTPUT_PATH       Optional output path for VTT files
-```
-
-Features:
-- Supports single file or batch processing
-- Multiple language support
-- Automatic timestamp generation
-- Progress tracking
-
-### 3. Processing Transcripts
-
-Process transcripts with AI analysis:
-
-```bash
-python process_transcript.py [options] MEETING_DIR
-
-Options:
-  --project-config TEXT   Path to project config YAML
-  --context-window INT    Context window size (default: 5)
-```
-
-Features:
-- Combines multiple VTT files
-- Generates meeting summaries
-- Extracts action items
-- Creates markdown reports
-- Integrates project context
-
-### 4. Main Application
-
-Launch the Streamlit interface:
-
-```bash
-streamlit run src/streamlit/app.py
-```
-
-Features:
-- Project and meeting management
-- Real-time transcription display
-- Meeting analysis and summaries
-- Task and ticket creation
-- Document integration
-
-## Common Workflows
-
-### 1. Quick Meeting Recording
-
-1. Configure audio devices (automatic)
-
-2. Start recording:
-   ```bash
-   python recorder_cli.py --title "Quick Meeting"
-   ```
-
-3. Press Enter to start/stop recordings as needed
-
-4. Press Ctrl+C to exit when done
-
-5. Process the recording:
-   ```bash
-   python transcribe_cli.py data/YYYYMMDD_default/meetings/
-   python process_transcript.py data/YYYYMMDD_default/meetings/
-   ```
-
-### 2. Project Meeting
-
-1. Set up project configuration in `data/projects.yaml`
-
-2. Start recording with project ID:
-   ```bash
-   python recorder_cli.py --title "Project Meeting" --project-id YOUR_PROJECT_ID
-   ```
-
-3. Press Enter to start/stop recordings as needed
-
-4. Press Ctrl+C to exit when done
-
-5. Process the recording:
-   ```bash
-   python transcribe_cli.py data/YOUR_PROJECT_ID/meetings/
-   python process_transcript.py data/YOUR_PROJECT_ID/meetings/
-   ```
-
-## Troubleshooting
-
-### Audio Issues
-
-1. No audio devices detected:
-   - Ensure FFmpeg is installed and in the system PATH
-   - Check system permissions for audio access
-   - Verify PyAudio installation
-
-2. Poor recording quality:
-   - Check microphone and speaker settings in your operating system
-   - Ensure both input and output devices are correctly selected
-   - Try different audio input/output devices if available
-
-### Transcription Issues
-
-1. GPU memory errors:
-   - Reduce Whisper model size
-   - Free up GPU memory
-   - Switch to CPU processing
-
-2. Language detection issues:
-   - Specify language explicitly
-   - Check audio quality
-   - Verify Whisper model size
 
 ## Support
 

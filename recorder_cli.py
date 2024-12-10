@@ -327,16 +327,40 @@ class RecordingSession:
     """Manages a recording session."""
     
     def __init__(self, title: str, project_id: str, metadata_manager: UnifiedMetadataManager):
+        """Initialize recording session.
+        
+        Args:
+            title: Title of the recording session
+            project_id: Project ID to associate with
+            metadata_manager: Metadata manager instance
+        """
         self.title = title
         self.project_id = project_id
         self.metadata_manager = metadata_manager
+        
+        # Generate meeting ID first
+        self.meeting_id = self.metadata_manager.generate_meeting_id()
+        logger.info(f"Generated meeting ID: {self.meeting_id}")
         
         # Generate meeting directory name using date and slugified title
         date_str = datetime.now().strftime("%Y%m%d")
         title_slug = slugify(self.title)
         self.meeting_dir_name = f"{date_str}_{title_slug}"
-        
         logger.info(f"Initializing RecordingSession with title: {title}")
+        
+        # Initialize meeting metadata before creating files
+        self.metadata_manager.update_meeting_metadata(
+            project_id=self.project_id,
+            meeting_id=self.meeting_id,
+            metadata={
+                "title": self.title,
+                "status": "recording",
+                "start_time": datetime.utcnow().isoformat(),
+                "recording_files": [],  # Initialize empty list for recording files
+                "vtt_files": []  # Initialize empty list for VTT files
+            }
+        )
+        logger.debug("Initialized meeting metadata")
         
         # Get meeting directory - use metadata_manager's get_meeting_dir method
         self.meeting_dir = self.metadata_manager.get_meeting_dir(self.project_id, self.meeting_dir_name)
@@ -349,29 +373,22 @@ class RecordingSession:
         self.session_file = self._generate_recording_filename()
         logger.debug(f"Recording file: {self.session_file}")
         
-        # Initialize meeting metadata
-        self.meeting_id = self.metadata_manager.generate_meeting_id()
-        self.metadata_manager.update_meeting_metadata(
-            project_id=self.project_id,
-            meeting_id=self.meeting_id,
-            metadata={
-                "title": self.title,
-                "status": "recording",
-                "start_time": datetime.utcnow().isoformat(),
-                "recording_file": str(self.session_file.relative_to(self.metadata_manager.data_dir))
-            }
-        )
-        
         # Initialize recorder
         self.recorder = AudioRecorder(self.meeting_dir, self.session_file)
     
     def _generate_recording_filename(self) -> Path:
         """Generate unique recording filename with index."""
+        # Get current recording files from metadata
+        metadata = self.metadata_manager.get_meeting_metadata(self.project_id, self.meeting_id)
+        existing_files = metadata.get("recording_files", []) if metadata else []
+        
+        # Find next available index
         index = 1
         while True:
             filename = f"recording_{index:03d}.wav"
             file_path = self.meeting_dir / filename
-            if not file_path.exists():
+            # Check both filesystem and metadata
+            if not file_path.exists() and filename not in existing_files:
                 return file_path
             index += 1
         
@@ -397,12 +414,21 @@ class RecordingSession:
             logger.info("Stopping recording session")
             success = self.recorder.stop_recording()
             if success:
+                # Get current recording files from metadata
+                metadata = self.metadata_manager.get_meeting_metadata(self.project_id, self.meeting_id)
+                recording_files = metadata.get("recording_files", [])
+                
+                # Add new recording file to list
+                recording_files.append(str(self.session_file.relative_to(self.metadata_manager.data_dir)))
+                
+                # Update metadata with new recording file and status
                 self.metadata_manager.update_meeting_metadata(
                     project_id=self.project_id,
                     meeting_id=self.meeting_id,
                     metadata={
                         "status": "recorded",
-                        "end_time": datetime.utcnow().isoformat()
+                        "end_time": datetime.utcnow().isoformat(),
+                        "recording_files": recording_files
                     }
                 )
             return success
