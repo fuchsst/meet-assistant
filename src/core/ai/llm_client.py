@@ -1,6 +1,6 @@
 """LLM client for text analysis using CrewAI."""
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import json
 from pathlib import Path
 import time
@@ -24,51 +24,68 @@ class LLMClient:
             frequency_penalty=LLM_CONFIG["frequency_penalty"],
             presence_penalty=LLM_CONFIG["presence_penalty"]
         )
-        # Initialize specialized agents
+        # Initialize specialized agents with more detailed context
         self.agents = {
             "summarizer": Agent(
                 role="Meeting Summarizer",
-                goal="Create concise, accurate meeting summaries",
-                backstory="Expert in distilling key information from conversations",
+                goal="Create concise, accurate meeting summaries with context awareness",
+                backstory="""Expert in distilling key information from conversations while maintaining 
+                context from related documents and previous discussions. Skilled at identifying themes,
+                patterns and connecting information across different sources.""",
                 llm=self.llm,
                 verbose=True
             ),
             "task_extractor": Agent(
                 role="Task Manager",
-                goal="Identify and organize action items and responsibilities",
-                backstory="Experienced project manager focused on task tracking",
+                goal="Identify and organize action items and responsibilities with full context",
+                backstory="""Experienced project manager focused on task tracking and delegation.
+                Specializes in understanding task dependencies, priorities, and connecting tasks
+                to broader project context and documentation.""",
                 llm=self.llm,
                 verbose=True
             ),
             "decision_tracker": Agent(
                 role="Decision Analyst",
-                goal="Track and document key decisions made during meetings",
-                backstory="Strategic analyst specializing in decision documentation",
+                goal="Track and document key decisions made during meetings with contextual understanding",
+                backstory="""Strategic analyst specializing in decision documentation and impact analysis.
+                Expert at connecting decisions to previous context, related documents, and understanding
+                implications for future actions.""",
                 llm=self.llm,
                 verbose=True
             )
         }
         
-    def analyze_text(self, text: str) -> str:
+    def analyze_text(self, text: str, additional_context: Optional[Dict[str, Any]] = None) -> str:
         """Analyze text and return structured insights using CrewAI agents."""
         try:
-            # Create an analyst agent
+            # Create an analyst agent with enhanced context awareness
             analyst = Agent(
                 role="Meeting Analyst",
-                goal="Analyze meeting transcripts and extract key information",
+                goal="Analyze meeting transcripts and extract key information with full context",
                 backstory="""You are an expert meeting analyst with years of experience
-                in extracting valuable insights from conversations. You excel at identifying
-                main points, action items, and key decisions.""",
+                in extracting valuable insights from conversations while considering broader
+                context from related documents and previous discussions. You excel at identifying
+                main points, action items, and key decisions while maintaining contextual relevance.""",
                 llm=self.llm,
                 verbose=True
             )
 
-            # Create analysis task
+            # Create analysis task with embedded context
             analysis_task = Task(
-                description="""Analyze the provided meeting transcript and extract:
-                1. A concise summary of the main points
-                2. Action items or tasks that were assigned
-                3. Key decisions that were made
+                description=f"""Analyze the following meeting transcript considering all available context.
+                Extract and structure the following information:
+                1. A concise summary of the main points, incorporating relevant context
+                2. Action items or tasks that were assigned, including ownership and deadlines
+                3. Key decisions that were made, including rationale and implications
+                
+                <transcript>
+                {text}
+                </transcript>
+                
+                <context>
+                {json.dumps(additional_context, indent=2) if additional_context else ""}
+                </context>
+                
                 Format your response as a JSON object with these three keys.""",
                 expected_output="A JSON object containing summary, action_items, and decisions",
                 agent=analyst
@@ -83,21 +100,26 @@ class LLMClient:
             )
 
             # Execute analysis
-            result = crew.kickoff(inputs={"transcript": text})
+            result = crew.kickoff()
+            
+            # Get task output
+            if hasattr(result, 'tasks_output') and result.tasks_output:
+                task_output = result.tasks_output[0].raw
+            else:
+                task_output = result.raw if hasattr(result, 'raw') else str(result)
             
             # Ensure the result is valid JSON
             try:
-                if isinstance(result, str):
-                    json.loads(result)
-                    return result
+                if isinstance(task_output, str):
+                    json.loads(task_output)
+                    return task_output
                 else:
                     # If result is already a dict/object, convert to JSON string
-                    return json.dumps(result)
+                    return json.dumps(task_output)
             except json.JSONDecodeError:
-                # If the result isn't valid JSON, try to extract and format it
                 logger.warning("LLM response was not valid JSON, attempting to format")
                 formatted_result = {
-                    "summary": str(result).split("Action items:")[0].strip(),
+                    "summary": str(task_output).split("Action items:")[0].strip(),
                     "action_items": [],
                     "decisions": []
                 }
@@ -107,23 +129,58 @@ class LLMClient:
             logger.error(f"Text analysis failed: {str(e)}")
             raise
 
-    def execute_custom_task(self, transcript: str, task_description: str) -> str:
+    def execute_custom_task(self, prompt: str, task_description: str, additional_context: Optional[Dict[str, Any]] = None) -> str:
         """Execute a custom analysis task on the transcript using CrewAI."""
         try:
-            # Create a custom task agent
+            # Create a custom task agent with enhanced context handling
             custom_agent = Agent(
                 role="Custom Task Analyst",
-                goal="Execute specific analysis tasks on meeting transcripts",
+                goal="Execute specific analysis tasks on meeting transcripts with full context awareness",
                 backstory="""You are a specialized analyst capable of performing
-                custom analysis tasks on meeting transcripts. You adapt your approach
-                based on the specific requirements of each task.""",
+                custom analysis tasks on meeting transcripts while maintaining awareness
+                of broader context from related documents and previous discussions. You
+                adapt your approach based on the specific requirements of each task while
+                ensuring contextual relevance.""",
                 llm=self.llm,
                 verbose=True
             )
 
-            # Create custom task
+            # Format context based on task type
+            context_str = ""
+            if additional_context:
+                if "transcript_chunk" in additional_context:
+                    # Format for transcript cleaning
+                    context_str = f"""
+                    <context>
+                    Previous chunks: {additional_context.get('previous_chunks', [])}
+                    Parameters: {json.dumps(additional_context.get('cleaning_parameters', {}), indent=2)}
+                    </context>
+                    """
+                elif "doc_metadata" in additional_context:
+                    # Format for document selection
+                    context_str = f"""
+                    <context>
+                    Meeting metadata: {json.dumps(additional_context.get('meeting_metadata', {}), indent=2)}
+                    Selection criteria: {json.dumps(additional_context.get('selection_criteria', {}), indent=2)}
+                    </context>
+                    """
+                else:
+                    # Generic context format
+                    context_str = f"""
+                    <context>
+                    {json.dumps(additional_context, indent=2)}
+                    </context>
+                    """
+
+            # Create custom task with embedded context
             custom_task = Task(
-                description=task_description,
+                description=f"""{task_description}
+
+                <input>
+                {prompt}
+                </input>
+                
+                {context_str}""",
                 expected_output="A detailed response addressing the task requirements in English.",
                 agent=custom_agent
             )
@@ -136,55 +193,111 @@ class LLMClient:
                 verbose=True
             )
 
-            # Execute task
-            result = crew.kickoff(inputs={"transcript": transcript})
+            # Execute task and get output
+            result = crew.kickoff()
             
-            return str(result)
+            # Get task output
+            if hasattr(result, 'tasks_output') and result.tasks_output:
+                return result.tasks_output[0].raw
+            return result.raw if hasattr(result, 'raw') else str(result)
             
         except Exception as e:
             logger.error(f"Custom task execution failed: {str(e)}")
             raise
 
-    def analyze_transcript(self, transcript: str, max_retries: int = 3) -> Dict[str, Any]:
-        """Analyze meeting transcript using multiple agents."""
+    def analyze_transcript(self, transcript: str, analysis_type: str, role: str, prompt: str, additional_context: Optional[Dict[str, Any]] = None, max_retries: int = 3) -> str:
+        """Analyze meeting transcript using multiple agents.
+        
+        Returns:
+            str: A markdown-formatted string containing the analysis. This string will be saved
+                 as a markdown file by the TranscriptProcessor.
+        """
         retry_count = 0
         while retry_count < max_retries:
             try:
-                # Create analysis tasks
-                tasks = [
-                    Task(
-                        description="Generate a comprehensive meeting summary",
-                        agent=self.agents["summarizer"],
-                        context={"transcript": transcript}
-                    ),
-                    Task(
-                        description="Extract and organize action items",
-                        agent=self.agents["task_extractor"],
-                        context={"transcript": transcript}
-                    ),
-                    Task(
-                        description="Identify key decisions made",
-                        agent=self.agents["decision_tracker"],
-                        context={"transcript": transcript}
+                # Format context sections
+                context_sections = []
+                
+                if additional_context:
+                    if "doc_context" in additional_context:
+                        context_sections.append(f"""
+                        <documents>
+                        {additional_context['doc_context']}
+                        </documents>
+                        """)
+                    
+                    if "metadata_context" in additional_context:
+                        context_sections.append(f"""
+                        <metadata>
+                        {additional_context['metadata_context']}
+                        </metadata>
+                        """)
+                    
+                    if "previous_analyses" in additional_context:
+                        prev_analyses = []
+                        for analysis_type, content in additional_context["previous_analyses"].items():
+                            prev_analyses.append(f"<analysis type='{analysis_type}'>\n{content}\n</analysis>")
+                        if prev_analyses:
+                            context_sections.append(f"""
+                            <previous_analyses>
+                            {"\n".join(prev_analyses)}
+                            </previous_analyses>
+                            """)
+                    
+                    # Add any remaining context
+                    other_context = {k: v for k, v in additional_context.items() 
+                                   if k not in {"doc_context", "metadata_context", "previous_analyses"}}
+                    if other_context:
+                        context_sections.append(f"""
+                        <additional_context>
+                        {json.dumps(other_context, indent=2)}
+                        </additional_context>
+                        """)
+
+                # Create analysis task with embedded context
+                task = Task(
+                    description=f"""{prompt}
+
+                    <transcript>
+                    {transcript}
+                    </transcript>
+                    
+                    {"\n".join(context_sections)}
+                    
+                    Format your response in markdown following the example in the prompt.""",
+                    expected_output=f"A detailed {analysis_type} analysis in markdown format.",
+                    agent=Agent(
+                        role=analysis_type.title(),
+                        goal=f"Generate a comprehensive {analysis_type} analysis",
+                        backstory=role,
+                        llm=self.llm,
+                        verbose=True
                     )
-                ]
+                )
 
                 # Create and run crew
                 crew = Crew(
-                    agents=list(self.agents.values()),
-                    tasks=tasks,
+                    agents=[task.agent],
+                    tasks=[task],
                     process=Process.sequential,
                     verbose=True
                 )
 
+                # Execute analysis and get task output
                 result = crew.kickoff()
                 
-                # Parse and validate results
-                analysis = self._parse_results(result)
-                if self._validate_analysis(analysis):
-                    return analysis
+                # Get markdown content from task output
+                if hasattr(result, 'tasks_output') and result.tasks_output:
+                    markdown_content = result.tasks_output[0].raw
+                else:
+                    markdown_content = result.raw if hasattr(result, 'raw') else str(result)
                 
-                raise ValueError("Analysis validation failed")
+                # Validate markdown format
+                if not markdown_content.strip().startswith('#'):
+                    logger.warning("Analysis result does not start with markdown heading, attempting to format")
+                    markdown_content = f"# Meeting {analysis_type.title()}\n\n{markdown_content}"
+                
+                return markdown_content
 
             except Exception as e:
                 logger.error(f"Analysis attempt {retry_count + 1} failed: {str(e)}")
@@ -193,72 +306,3 @@ class LLMClient:
                     time.sleep(2 ** retry_count)  # Exponential backoff
                 else:
                     raise RuntimeError(f"Analysis failed after {max_retries} attempts") from e
-
-    def _parse_results(self, raw_results: str) -> Dict[str, Any]:
-        """Parse and structure the analysis results."""
-        try:
-            # Parse the JSON string from analyze_text
-            results = json.loads(raw_results)
-            
-            # Extract different components from the results
-            analysis = {
-                "summary": results.get("summary", "No summary available"),
-                "action_items": results.get("action_items", []),
-                "decisions": results.get("decisions", []),
-                "metadata": {
-                    "timestamp": time.time(),
-                    "version": "1.0"
-                }
-            }
-            return analysis
-        except Exception as e:
-            logger.error(f"Failed to parse analysis results: {str(e)}")
-            raise
-
-    def _validate_analysis(self, analysis: Dict[str, Any]) -> bool:
-        """Validate the structure and content of the analysis."""
-        try:
-            required_keys = ["summary", "action_items", "decisions", "metadata"]
-            if not all(key in analysis for key in required_keys):
-                logger.error("Missing required keys in analysis")
-                return False
-
-            # Validate summary
-            if not isinstance(analysis["summary"], str) or len(analysis["summary"]) < 10:
-                logger.error("Invalid summary format or length")
-                return False
-
-            # Validate action items
-            if not isinstance(analysis["action_items"], list):
-                logger.error("Action items must be a list")
-                return False
-
-            # Validate decisions
-            if not isinstance(analysis["decisions"], list):
-                logger.error("Decisions must be a list")
-                return False
-
-            # Validate metadata
-            metadata = analysis["metadata"]
-            if not (isinstance(metadata, dict) and 
-                   "timestamp" in metadata and 
-                   "version" in metadata):
-                logger.error("Invalid metadata format")
-                return False
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Analysis validation failed: {str(e)}")
-            return False
-
-    def save_analysis(self, analysis: Dict[str, Any], filepath: Path) -> None:
-        """Save analysis results to a file."""
-        try:
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(analysis, f, indent=2)
-            logger.info(f"Saved analysis to {filepath}")
-        except Exception as e:
-            logger.error(f"Failed to save analysis: {str(e)}")
-            raise

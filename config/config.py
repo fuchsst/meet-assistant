@@ -30,9 +30,9 @@ JIRA_CONFIG = {
 }
 
 WEB_CONFIG = {
-    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.1",
-    "timeout": 30,  # seconds
-    "max_retries": 3
+    "user_agent": os.getenv("WEB_USER_AGENT", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.1"),
+    "timeout": int(os.getenv("WEB_TIMEOUT", "30")),  # seconds
+    "max_retries": int(os.getenv("WEB_MAX_RETRIES", "3"))
 }
 
 # Audio device settings file
@@ -196,11 +196,12 @@ CACHE_CONFIG = {
 
 # LLM settings
 LLM_CONFIG = {
-    "provider": "anthropic",  # The LLM provider to use
-    "model": "claude-3-5-sonnet-20241022",  # The model to use
-    "temperature": 0.7,  # Controls randomness in responses
-    "max_tokens": 8192,  # Maximum length of generated responses
-    "top_p": 0.9,  # Controls diversity in responses
-    "frequency_penalty": 0.0,  # Reduces repetition of token sequences
-    "presence_penalty": 0.0,  # Reduces repetition of topics
+    "provider": os.getenv("LLM_PROVIDER", "anthropic"),  # The LLM provider to use
+    # "model": os.getenv("LLM_MODEL", "claude-3-5-sonnet-20241022"),  # The model to use
+    "model": os.getenv("LLM_MODEL", "claude-3-5-haiku-20241022"),  # The model to use
+    "temperature": float(os.getenv("LLM_TEMPERATURE", "0.7")),  # Controls randomness in responses
+    "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "8192")),  # Maximum length of generated responses
+    "top_p": float(os.getenv("LLM_TOP_P", "0.9")),  # Controls diversity in responses
+    "frequency_penalty": float(os.getenv("LLM_FREQUENCY_PENALTY", "0.0")),  # Reduces repetition of token sequences
+    "presence_penalty": float(os.getenv("LLM_PRESENCE_PENALTY", "0.0"))  # Reduces repetition of topics
 }
