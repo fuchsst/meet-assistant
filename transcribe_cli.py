@@ -1,13 +1,14 @@
-"""CLI script for transcribing WAV files to VTT format using Whisper."""
+"""CLI script for transcribing WAV files to VTT format using Faster Whisper."""
 import logging
+import os
 from pathlib import Path
 import sys
 import time
 from typing import Optional, Dict, List, Set
-from datetime import datetime
+from datetime import datetime, timezone
 import fire
 import torch
-import whisper
+from faster_whisper import WhisperModel
 import numpy as np
 
 from config.config import WHISPER_CONFIG, MODELS_DIR
@@ -23,31 +24,43 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
+def get_local_now() -> datetime:
+    """Helper function to get current local time as a timezone-aware datetime object."""
+    return datetime.now().astimezone()
+
 class WhisperTranscriber:
-    """Handles transcription of WAV files using Whisper."""
+    """Handles transcription of WAV files using Faster Whisper."""
     
-    def __init__(self, language: str = WHISPER_CONFIG["language"]):
+    def __init__(self, language: Optional[str] = None):
         """Initialize transcriber.
         
         Args:
-            language: Language for transcription (default: from config)
+            language: Language for transcription (default: None, will auto-detect)
         """
         self.language = language
         self.metadata_manager = UnifiedMetadataManager()
         
-        # Initialize Whisper
-        logger.info("Loading Whisper model...")
+        # Initialize Faster Whisper
+        logger.info("Loading Faster Whisper model...")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if torch.cuda.is_available() else "int8"
+        
+        # Check if MODELS_DIR exists
+        if not os.path.exists(MODELS_DIR):
+            os.makedirs(MODELS_DIR)
+            logger.info(f"Created models directory: {MODELS_DIR}")
+        
         try:
-            logger.debug(f"Loading Whisper model size: {WHISPER_CONFIG['model_size']}")
-            self.whisper = whisper.load_model(
+            logger.debug(f"Loading Faster Whisper model size: {WHISPER_CONFIG['model_size']}")
+            self.model = WhisperModel(
                 WHISPER_CONFIG["model_size"],
                 device=self.device,
+                compute_type=compute_type,
                 download_root=str(MODELS_DIR)
             )
-            logger.info(f"Whisper model loaded successfully on {self.device}")
+            logger.info(f"Faster Whisper model loaded successfully on {self.device}")
         except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}", exc_info=True)
+            logger.error(f"Failed to load Faster Whisper model: {e}", exc_info=True)
             raise
 
     def _preprocess_text(self, text: str) -> str:
@@ -72,12 +85,13 @@ class WhisperTranscriber:
     def _save_vtt(self, vtt_path: Path, segments: list) -> None:
         """Save transcription segments as VTT file."""
         try:
+            logger.debug(f"Starting to save VTT file: {vtt_path}")
             with open(vtt_path, 'w', encoding='utf-8') as f:
                 f.write("WEBVTT\n\n")
-                for segment in segments:
-                    start = segment['start']
-                    end = segment['end']
-                    text = segment['text'].strip()
+                for i, segment in enumerate(segments):
+                    start = segment.start
+                    end = segment.end
+                    text = segment.text.strip()
                     
                     # Format timestamps as HH:MM:SS.mmm
                     start_time = f"{int(start//3600):02d}:{int((start%3600)//60):02d}:{start%60:06.3f}"
@@ -85,6 +99,9 @@ class WhisperTranscriber:
                     
                     f.write(f"{start_time} --> {end_time}\n")
                     f.write(f"{text}\n\n")
+                    
+                    if i % 10 == 0:  # Log progress every 10 segments
+                        logger.debug(f"Processed {i+1}/{len(segments)} segments")
             
             logger.info(f"Saved VTT file: {vtt_path}")
             
@@ -110,74 +127,60 @@ class WhisperTranscriber:
             if output_path is None:
                 output_path = audio_path.with_suffix('.vtt')
             
-            # Load audio file
-            try:
-                logger.debug(f"Loading audio file: {audio_path}")
-                audio = whisper.load_audio(str(audio_path))
-                logger.debug(f"Loaded audio file: {len(audio)} samples")
-                
-                if np.all(audio == 0):
-                    logger.warning(f"Audio file contains only zeros: {audio_path}")
-                    return None
-                
-            except Exception as e:
-                logger.error(f"Failed to load audio file: {e}", exc_info=True)
-                raise
+            logger.debug(f"Output path set to: {output_path}")
             
             # Transcribe audio
             try:
-                logger.debug("Starting Whisper transcription")
-                result = self.whisper.transcribe(
-                    audio,
+                logger.debug("Starting Faster Whisper transcription")
+                segments, info = self.model.transcribe(
+                    str(audio_path),
                     language=self.language,
                     task="transcribe",
-                    fp16=torch.cuda.is_available(),
-                    temperature=0.0,
-                    compression_ratio_threshold=2.4,
-                    logprob_threshold=-1.0,
-                    no_speech_threshold=0.6,
-                    condition_on_previous_text=True,
                     beam_size=5,
-                    best_of=5
+                    word_timestamps=True
                 )
-                logger.debug("Transcription complete")
+                logger.debug(f"Transcription complete. Detected language: {info.language}")
+                
+                # Update language if it was auto-detected
+                if self.language is None:
+                    self.language = info.language
+                
             except Exception as e:
                 logger.error(f"Failed to transcribe audio: {e}", exc_info=True)
                 raise
             
             # Process segments and save VTT
-            segments = []
-            for segment in result["segments"]:
-                text = self._preprocess_text(segment["text"])
-                if text and len(text) > 2:
-                    segments.append({
-                        'start': segment['start'],
-                        'end': segment['end'],
-                        'text': text
-                    })
+            logger.debug("Processing transcribed segments")
+            processed_segments = []
+            for segment in segments:
+                text = self._preprocess_text(segment.text)
+                if text:
+                    processed_segments.append(segment)
             
-            self._save_vtt(output_path, segments)
+            logger.debug(f"Processed {len(processed_segments)} segments")
+            
+            logger.debug("Saving VTT file")
+            self._save_vtt(output_path, processed_segments)
+            logger.debug("VTT file saved successfully")
+            
             return output_path
             
         except Exception as e:
             logger.error(f"Transcription failed: {e}", exc_info=True)
             return None
-        finally:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
     def transcribe_meeting(
         self,
         project_id: Optional[str],
         meeting_id: str,
-        language: str = WHISPER_CONFIG["language"]
+        language: Optional[str] = None
     ) -> List[Path]:
         """Transcribe WAV files listed in meeting metadata.
         
         Args:
             project_id: Optional project ID (uses default if not provided)
             meeting_id: Meeting ID or directory name
-            language: Language for transcription
+            language: Language for transcription (default: None, will auto-detect)
             
         Returns:
             List of created VTT file paths
@@ -200,7 +203,7 @@ class WhisperTranscriber:
                     meeting_id,
                     {
                         "transcription_status": "no_audio_files",
-                        "transcription_end": datetime.utcnow().isoformat()
+                        "transcription_end": get_local_now().isoformat()
                     }
                 )
                 return []
@@ -211,8 +214,8 @@ class WhisperTranscriber:
                 meeting_id,
                 {
                     "transcription_status": "in_progress",
-                    "transcription_start": datetime.utcnow().isoformat(),
-                    "language": language
+                    "transcription_start": get_local_now().isoformat(),
+                    "language": language or "auto"
                 }
             )
             
@@ -256,8 +259,8 @@ class WhisperTranscriber:
                 meeting_id,
                 {
                     "transcription_status": status,
-                    "transcription_end": datetime.utcnow().isoformat(),
-                    "language": language,
+                    "transcription_end": get_local_now().isoformat(),
+                    "language": self.language or "auto",
                     "vtt_files": vtt_files
                 }
             )
@@ -274,7 +277,7 @@ class WhisperTranscriber:
                     {
                         "transcription_status": "failed",
                         "transcription_error": str(e),
-                        "transcription_end": datetime.utcnow().isoformat()
+                        "transcription_end": get_local_now().isoformat()
                     }
                 )
             raise
@@ -383,7 +386,7 @@ def select_meeting(metadata_manager: UnifiedMetadataManager, project_id: str) ->
 def main(
     meeting_id: Optional[str] = None,
     project_id: Optional[str] = None,
-    language: str = WHISPER_CONFIG["language"],
+    language: Optional[str] = None,
     monitor: bool = False
 ):
     """Transcribe meeting recordings to VTT format.

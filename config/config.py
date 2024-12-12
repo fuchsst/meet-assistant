@@ -79,7 +79,7 @@ AUDIO_CONFIG = {
 
 # Whisper settings
 WHISPER_CONFIG = {
-    "model_size": "medium",  # options: tiny, base, small, medium, large, turbo
+    "model_size": "large",  # options: tiny, base, small, medium, large, turbo
     "language": "en",  # Changed to auto-detect for better flexibility
     "task": "transcribe",
     "chunk_length": 30,  # seconds per chunk for better transcription

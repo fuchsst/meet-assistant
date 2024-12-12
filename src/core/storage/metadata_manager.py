@@ -8,6 +8,7 @@ from datetime import datetime
 import uuid
 import yaml
 import jsonschema
+from slugify import slugify
 
 from config.config import DATA_DIR
 
@@ -186,11 +187,11 @@ class UnifiedMetadataManager:
     
     # Meeting Management
     
-    def generate_meeting_id(self) -> str:
-        """Generate unique meeting ID."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_id = str(uuid.uuid4())[:8]
-        return f"meeting_{timestamp}_{unique_id}"
+    def generate_meeting_id(self, title: str) -> str:
+        """Generate unique meeting ID based on current date and slugified title."""
+        date_str = datetime.now().strftime("%Y%m%d")
+        title_slug = slugify(title)
+        return f"{date_str}_{title_slug}"
     
     def get_meeting_dir(self, project_id: str, meeting_id: str) -> Path:
         """Get meeting directory path."""
