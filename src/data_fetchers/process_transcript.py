@@ -41,6 +41,53 @@ class TranscriptProcessor:
         self.metadata_manager = UnifiedMetadataManager()
         logger.debug("TranscriptProcessor initialized with LLM client and metadata manager")
 
+    def _get_previous_meeting_data(self, project_id: str, meeting_id: str) -> Dict[str, str]:
+        """Get summary and followup from the previous meeting."""
+        try:
+            # Get all meetings for the project
+            project_meetings = self.metadata_manager.list_meetings(project_id)
+            
+            # Sort meetings by date
+            sorted_meetings = sorted(
+                [(m, self.metadata_manager.get_meeting_metadata(project_id, m)) 
+                 for m in project_meetings],
+                key=lambda x: x[1].get('start_time', ''),
+                reverse=True
+            )
+            
+            # Find the previous meeting
+            current_found = False
+            for meeting_tuple in sorted_meetings:
+                if current_found:
+                    prev_meeting_id = meeting_tuple[0]
+                    prev_meeting_dir = self.metadata_manager.get_meeting_dir(project_id, prev_meeting_id)
+                    
+                    prev_data = {}
+                    # Try to read summary and followup
+                    for doc_type in ['summary', 'followup']:
+                        try:
+                            with open(prev_meeting_dir / f"{doc_type}.md", 'r', encoding='utf-8') as f:
+                                prev_data[doc_type] = f.read()
+                        except FileNotFoundError:
+                            prev_data[doc_type] = f"No {doc_type} available from previous meeting"
+                    
+                    return prev_data
+                
+                if meeting_tuple[0] == meeting_id:
+                    current_found = True
+            
+            return {
+                "summary": "No previous meeting found",
+                "followup": "No previous meeting found"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting previous meeting data: {e}")
+            return {
+                "summary": f"Error retrieving previous meeting data: {str(e)}",
+                "followup": f"Error retrieving previous meeting data: {str(e)}"
+            }
+
     def _clean_transcript(self, transcript: str) -> str:
         """Clean and improve the transcript text."""
         logger.debug("Cleaning transcript text")
@@ -277,7 +324,8 @@ class TranscriptProcessor:
         doc_contents: Dict[str, str],
         analysis_type: str,
         meeting_metadata: Dict,
-        previous_analyses: Optional[Dict[str, str]] = None
+        previous_analyses: Optional[Dict[str, str]] = None,
+        previous_meeting_data: Optional[Dict[str, str]] = None
     ) -> str:
         """Generate specific type of meeting analysis."""
         logger.debug(f"Generating {analysis_type} analysis")
@@ -297,14 +345,28 @@ class TranscriptProcessor:
 - Project: {meeting_metadata.get('project_description', 'No description available')}
 """
         
+        # Add previous meeting context if available
+        previous_meeting_context = ""
+        if previous_meeting_data:
+            previous_meeting_context = f"""
+# Previous Meeting Context
+## Summary
+{previous_meeting_data.get('summary', 'No previous summary available')}
+
+## Follow-up Items
+{previous_meeting_data.get('followup', 'No previous follow-up items available')}
+"""
+        
         # Create inputs for analysis
         inputs = {
             "transcript": transcript,
             "doc_context": doc_context,
             "metadata_context": metadata_context,
+            "previous_meeting_context": previous_meeting_context,
             "meeting_metadata": meeting_metadata,
             "document_contents": doc_contents,
             "previous_analyses": previous_analyses or {},
+            "previous_meeting_data": previous_meeting_data or {},
             "analysis_parameters": {
                 "type": analysis_type,
                 "maintain_context": True,
@@ -356,6 +418,9 @@ class TranscriptProcessor:
             
             # Get meeting metadata
             meeting_metadata = self.metadata_manager.get_meeting_metadata(project_id, meeting_id)
+            
+            # Get previous meeting data
+            previous_meeting_data = self._get_previous_meeting_data(project_id, meeting_id)
             
             # Get meeting directory and transcript path
             meeting_dir = self.metadata_manager.get_meeting_dir(project_id, meeting_id)
@@ -436,7 +501,8 @@ class TranscriptProcessor:
                         doc_contents,
                         analysis_type,
                         meeting_metadata,
-                        previous_analyses  # Pass previous analyses for context
+                        previous_analyses,  # Pass previous analyses for context
+                        previous_meeting_data  # Pass previous meeting data for context
                     )
                     
                     # Save analysis file

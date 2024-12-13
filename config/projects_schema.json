@@ -30,7 +30,7 @@
             "description": "List of project team members",
             "items": {
               "type": "object",
-              "required": ["name", "role", "user_names"],
+              "required": ["name", "role"],
               "properties": {
                 "name": {
                   "type": "string",

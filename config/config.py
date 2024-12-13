@@ -197,7 +197,6 @@ CACHE_CONFIG = {
 # LLM settings
 LLM_CONFIG = {
     "provider": os.getenv("LLM_PROVIDER", "anthropic"),  # The LLM provider to use
-    # "model": os.getenv("LLM_MODEL", "claude-3-5-sonnet-20241022"),  # The model to use
     "model": os.getenv("LLM_MODEL", "claude-3-5-haiku-20241022"),  # The model to use
     "temperature": float(os.getenv("LLM_TEMPERATURE", "0.7")),  # Controls randomness in responses
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "8192")),  # Maximum length of generated responses

@@ -139,23 +139,28 @@ Do not include any explanation or additional text.
 ANALYSIS_ROLES = {
     "summary": """You are a senior business analyst specializing in creating clear, actionable meeting summaries.
     Your expertise includes connecting discussions to broader project context, identifying patterns across meetings,
-    and highlighting important relationships between different topics and documents.""",
+    and highlighting important relationships between different topics and documents. You excel at tracking progress
+    on previous meeting items and maintaining continuity between discussions.""",
     
     "minutes": """You are an experienced meeting secretary known for detailed, well-structured meeting minutes.
     You excel at documenting discussions while maintaining connections to previous meetings, related documents,
-    and ongoing project context.""",
+    and ongoing project context. You ensure continuity by referencing previous meeting outcomes and tracking
+    progress on ongoing items.""",
     
     "questions": """You are a strategic consultant skilled at identifying critical open questions and issues.
     You understand technical and business contexts deeply, allowing you to identify potential issues and their
-    implications across different aspects of the project.""",
+    implications across different aspects of the project. You track the evolution of questions across meetings
+    and highlight both resolved and ongoing concerns.""",
     
     "tasks": """You are a project manager expert at extracting and organizing actionable tasks.
     You understand task dependencies, technical requirements, and how tasks relate to broader project goals
-    and existing documentation.""",
+    and existing documentation. You excel at tracking task progress across meetings and ensuring continuity
+    in project execution.""",
     
     "followup": """You are a business operations manager focused on ensuring effective meeting follow-through.
     You excel at connecting action items to existing processes, documentation, and team responsibilities while
-    maintaining context across meetings."""
+    maintaining context across meetings. You track progress on previous follow-up items and ensure continuous
+    improvement in project execution."""
 }
 
 # Prompts for different types of meeting analysis
@@ -164,22 +169,25 @@ ANALYSIS_PROMPTS = {
     "summary": """
 <context_guidelines>
 Consider and reference:
+- Previous meeting summary and follow-up items
 - Related documentation and technical specs
-- Previous meeting decisions and discussions
 - Project roadmap and timeline context
 - Team dynamics and responsibilities
+- Progress on previous action items
 </context_guidelines>
 
 <instructions>
 1. Create a comprehensive summary that captures:
+   - Progress on previous meeting's action items
    - Key topics discussed and their outcomes
    - Main decisions made and their rationale
    - Critical insights and important points
-   - Action items and next steps
+   - New action items and next steps
    - Connections to existing documentation
    - Impact on ongoing initiatives
 
 2. Format requirements:
+   - Start with progress update on previous items
    - Use clear markdown headings
    - Include bullet points for key items
    - Keep paragraphs concise and focused
@@ -189,6 +197,11 @@ Consider and reference:
 
 <example>
 # Meeting Summary: Q4 Planning Session
+
+## Progress on Previous Items
+- Completed API security audit [from previous meeting]
+- Resource allocation approved [ref: previous follow-up items]
+- UI components delivered ahead of schedule
 
 ## Key Topics
 - Product roadmap review for Q4 [ref: roadmap_2024.md]
@@ -221,6 +234,7 @@ Related docs: market_analysis_2024.pdf, customer_feedback_q1.md
 <context_guidelines>
 Consider and reference:
 - Previous meeting minutes and decisions
+- Previous meeting follow-up items
 - Technical documentation and specifications
 - Project timelines and milestones
 - Team roles and responsibilities
@@ -228,6 +242,7 @@ Consider and reference:
 
 <instructions>
 1. Document the meeting comprehensively:
+   - Progress updates on previous items
    - Date, participants, and objectives
    - Detailed discussion points
    - Decisions and their context
@@ -236,6 +251,7 @@ Consider and reference:
    - Connections to previous discussions
 
 2. Format requirements:
+   - Begin with previous meeting follow-up
    - Clear chronological structure
    - Separate sections for each topic
    - Highlight decisions and actions
@@ -249,7 +265,18 @@ Date: March 15, 2024
 Participants: John (PM), Sarah (Dev), Mike (Design)
 Related Documents: roadmap_2024.md, api/v2/spec.md
 
-## Agenda
+## Follow-up from Previous Meeting
+1. API Security Audit
+   - Completed on schedule
+   - All critical issues addressed
+   - Reference: security_audit_results.md
+
+2. Resource Allocation
+   - Budget approved
+   - Team expansion initiated
+   - Reference: Updated budget in finance_q2.xlsx
+
+## Current Meeting Agenda
 1. Q1 Progress Review
 2. Feature Prioritization
 3. Resource Allocation
@@ -291,6 +318,7 @@ Dependencies: API v2 completion [ref: api/v2/spec.md]
     "questions": """
 <context_guidelines>
 Consider and reference:
+- Questions from previous meeting
 - Existing technical documentation
 - Previous meeting discussions
 - Known project constraints
@@ -299,7 +327,8 @@ Consider and reference:
 
 <instructions>
 1. Extract and categorize all questions and unresolved issues:
-   - Technical questions and challenges
+   - Status of previous meeting's questions
+   - New technical questions and challenges
    - Business and process uncertainties
    - Resource and timeline concerns
    - Dependencies and blockers
@@ -307,6 +336,7 @@ Consider and reference:
    - Security and compliance concerns
 
 2. Format requirements:
+   - Start with previous meeting questions status
    - Group by category
    - Include context for each item
    - Note urgency/priority
@@ -317,7 +347,18 @@ Consider and reference:
 <example>
 # Open Questions & Issues
 
-## Technical Questions
+## Previous Meeting Questions Status
+1. API Performance Concerns [RESOLVED]
+   - Load testing completed
+   - Performance meets requirements
+   - Reference: performance_test_results.md
+
+2. Security Compliance [IN PROGRESS]
+   - Initial audit completed
+   - Awaiting final approval
+   - Reference: security_audit.md
+
+## Current Technical Questions
 1. High Priority
    - How will the new API handle concurrent requests?
      Context: Current system shows bottlenecks [ref: performance_metrics.md]
@@ -356,6 +397,7 @@ Consider and reference:
     "tasks": """
 <context_guidelines>
 Consider and reference:
+- Previous meeting's tasks and their status
 - Project timeline and milestones
 - Team capacity and skills
 - Technical dependencies
@@ -364,6 +406,7 @@ Consider and reference:
 
 <instructions>
 1. Create a comprehensive task list including:
+   - Status update on previous tasks
    - Critical immediate actions
    - Development and technical tasks
    - Planning and coordination items
@@ -372,6 +415,7 @@ Consider and reference:
    - Testing and validation needs
 
 2. Format requirements:
+   - Begin with previous task updates
    - Clear ownership and deadlines
    - Priority levels
    - Dependencies noted
@@ -381,6 +425,19 @@ Consider and reference:
 
 <example>
 # Task List
+
+## Previous Tasks Status
+1. [COMPLETED] Security Audit
+   Owner: Security Team
+   Completion Date: March 15
+   Reference: audit_results.md
+
+2. [IN PROGRESS] API Documentation
+   Owner: Tech Writers
+   Original Due: March 20
+   New Due: March 25
+   Status: 75% complete
+   Blockers: Awaiting final API specs
 
 ## Immediate Actions (Next 48 Hours)
 1. [HIGH] Configure Production Environment
@@ -425,6 +482,7 @@ Consider and reference:
     "followup": """
 <context_guidelines>
 Consider and reference:
+- Previous meeting's follow-up items and their status
 - Previous meeting outcomes
 - Ongoing project timelines
 - Team availability and capacity
@@ -433,6 +491,7 @@ Consider and reference:
 
 <instructions>
 1. Create a detailed follow-up plan including:
+   - Status of previous follow-up items
    - Immediate actions and owners
    - Next meeting preparation
    - Dependencies and coordination
@@ -441,6 +500,7 @@ Consider and reference:
    - Review and validation needs
 
 2. Format requirements:
+   - Start with previous follow-up status
    - Clear timeline
    - Specific responsibilities
    - Required preparations
@@ -450,6 +510,18 @@ Consider and reference:
 
 <example>
 # Follow-up Plan
+
+## Previous Follow-up Items Status
+1. API Documentation Update [COMPLETED]
+   - All endpoints documented
+   - Review completed
+   - Reference: api_docs_v2.md
+
+2. Performance Testing [IN PROGRESS]
+   - Initial tests completed
+   - Final validation pending
+   - Due: March 20
+   - Reference: performance_test_plan.md
 
 ## Immediate Actions
 1. Documentation Updates
