@@ -104,6 +104,35 @@
               }
             }
           },
+          "slack": {
+            "type": "object",
+            "description": "Slack integration settings",
+            "required": ["channels"],
+            "properties": {
+              "channels": {
+                "type": "array",
+                "description": "List of slack channels",
+                "items": {
+                  "type": "object",
+                  "required": ["channel_id", "name"],
+                  "properties": {
+                    "channel_id": {
+                      "type": "string",
+                      "description": "Slack channel ID"
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Human readable name of the channel"
+                    },
+                    "topic": {
+                      "type": "string",
+                      "description": "Short description of the channel purpose"
+                    }
+                  }
+                }
+              }
+            }
+          },
           "web": {
             "type": "array",
             "description": "List of web resources",

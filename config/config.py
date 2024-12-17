@@ -35,6 +35,16 @@ WEB_CONFIG = {
     "max_retries": int(os.getenv("WEB_MAX_RETRIES", "3"))
 }
 
+# Slack settings
+SLACK_CONFIG = {
+    "token": os.getenv("SLACK_TOKEN"),  # Bot User OAuth Token
+    "workspace": os.getenv("SLACK_WORKSPACE"),  # Workspace name
+    "max_retries": int(os.getenv("SLACK_MAX_RETRIES", "3")),  # Maximum number of API retries
+    "retry_delay": int(os.getenv("SLACK_RETRY_DELAY", "5")),  # Delay between retries in seconds
+    "batch_size": int(os.getenv("SLACK_BATCH_SIZE", "100")),  # Number of messages to fetch per batch
+    "history_days": int(os.getenv("SLACK_HISTORY_DAYS", "90"))  # Number of days of history to fetch
+}
+
 # Audio device settings file
 AUDIO_DEVICES_CONFIG = DATA_DIR / "audio_devices.yaml"
 
@@ -76,7 +86,6 @@ AUDIO_CONFIG = {
     "devices": AUDIO_DEVICES
 }
 
-
 # Whisper settings
 WHISPER_CONFIG = {
     "model_size": "large",  # options: tiny, base, small, medium, large, turbo
@@ -106,7 +115,6 @@ WHISPER_CONFIG = {
         "id": "Indonesian"
     }
 }
-
 
 # Logging configuration
 LOGGING_CONFIG = {
