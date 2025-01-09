@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 import json
+from snowflake.snowpark import Session
+from snowflake.snowpark.context import get_active_session
 
 # Base directories
 BASE_DIR = Path(__file__).parent.parent
@@ -13,6 +15,30 @@ MODELS_DIR = BASE_DIR / "models"
 # Create necessary directories
 for directory in [DATA_DIR, MEETINGS_DIR, LOGS_DIR, MODELS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
+
+# Snowflake settings
+SNOWFLAKE_CONFIG = {
+    "account": os.getenv("SNOWFLAKE_ACCOUNT"),
+    "user": os.getenv("SNOWFLAKE_USER"),
+    "private_key_file": os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH"),
+    "private_key_file_pwd": os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"),
+    "role": os.getenv("SNOWFLAKE_ROLE", "project_assistant_admin"),
+    "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE"),
+    "database": os.getenv("SNOWFLAKE_DATABASE"),
+    "schema": os.getenv("SNOWFLAKE_SCHEMA", "pa_core")
+}
+
+def get_snowflake_session() -> Session:
+    """Get Snowflake session.
+    
+    Returns:
+        Session: Active session if available, otherwise creates new session
+    """
+    try:
+        session = get_active_session()
+    except:
+        session = Session.builder.configs(SNOWFLAKE_CONFIG).create()
+    return session
 
 # Document fetcher settings
 CONFLUENCE_CONFIG = {
@@ -86,7 +112,17 @@ AUDIO_CONFIG = {
     "devices": AUDIO_DEVICES
 }
 
-# Whisper settings
+# AWS Transcribe settings
+AWS_TRANSCRIBE_CONFIG = {
+    "region": os.getenv("AWS_REGION", "eu-central-1"),
+    "enabled": True,
+    "input_bucket": os.getenv("AWS_S3_INPUT_BUCKET"),
+    "output_bucket": os.getenv("AWS_S3_OUTPUT_BUCKET"),
+    "role_arn": os.getenv("AWS_TRANSCRIBE_ROLE_ARN"),
+    "allow_deferred_execution": os.getenv("AWS_TRANSCRIBE_ALLOW_DEFERRED", "false").lower() == "true"
+}
+
+# Whisper settings (using faster-whisper)
 WHISPER_CONFIG = {
     "model_size": "large",  # options: tiny, base, small, medium, large, turbo
     "language": "en",  # Changed to auto-detect for better flexibility
@@ -204,11 +240,19 @@ CACHE_CONFIG = {
 
 # LLM settings
 LLM_CONFIG = {
-    "provider": os.getenv("LLM_PROVIDER", "anthropic"),  # The LLM provider to use
-    "model": os.getenv("LLM_MODEL", "claude-3-5-haiku-20241022"),  # The model to use
+    "provider": "bedrock",  # Using AWS Bedrock as the provider
+    "model": os.getenv("LLM_MODEL", "anthropic.claude-3-sonnet-20240229-v1:0"),  # Default to Claude 3 Sonnet on Bedrock
     "temperature": float(os.getenv("LLM_TEMPERATURE", "0.7")),  # Controls randomness in responses
     "max_tokens": int(os.getenv("LLM_MAX_TOKENS", "8192")),  # Maximum length of generated responses
     "top_p": float(os.getenv("LLM_TOP_P", "0.9")),  # Controls diversity in responses
     "frequency_penalty": float(os.getenv("LLM_FREQUENCY_PENALTY", "0.0")),  # Reduces repetition of token sequences
-    "presence_penalty": float(os.getenv("LLM_PRESENCE_PENALTY", "0.0"))  # Reduces repetition of topics
+    "presence_penalty": float(os.getenv("LLM_PRESENCE_PENALTY", "0.0")),  # Reduces repetition of topics
+}
+
+# AWS Bedrock settings
+AWS_BEDROCK_CONFIG = {
+    "region_name": os.getenv("AWS_REGION", "eu-central-1"),
+    "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID"),
+    "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
+    "aws_session_token": os.getenv("AWS_SESSION_TOKEN")  # Optional, for temporary credentials
 }

@@ -326,17 +326,19 @@ class AudioRecorder:
 class RecordingSession:
     """Manages a recording session."""
     
-    def __init__(self, title: str, project_id: str, metadata_manager: UnifiedMetadataManager):
+    def __init__(self, title: str, project_id: str, metadata_manager: UnifiedMetadataManager, convert_to_mp3: bool = False):
         """Initialize recording session.
         
         Args:
             title: Title of the recording session
             project_id: Project ID to associate with
             metadata_manager: Metadata manager instance
+            convert_to_mp3: Whether to convert the WAV recording to MP3 after stopping
         """
         self.title = title
         self.project_id = project_id
         self.metadata_manager = metadata_manager
+        self.convert_to_mp3 = convert_to_mp3
         
         # Generate meeting ID based on current date and slugified title
         self.meeting_id = self.metadata_manager.generate_meeting_id(self.title)
@@ -388,6 +390,27 @@ class RecordingSession:
         filename = f"recording_{index:03d}.wav"
         return self.meeting_dir / filename
     
+    def _convert_to_mp3(self, wav_file: Path) -> Optional[Path]:
+        """Convert WAV file to MP3 format."""
+        try:
+            mp3_file = wav_file.with_suffix('.mp3')
+            cmd = [
+                'ffmpeg',
+                '-y',  # Overwrite output file if exists
+                '-i', str(wav_file),
+                '-codec:a', 'libmp3lame',
+                '-qscale:a', '2',  # High quality, variable bit rate
+                str(mp3_file)
+            ]
+            logger.info(f"Converting {wav_file.name} to MP3")
+            subprocess.run(cmd, check=True, capture_output=True)
+            wav_file.unlink()
+            logger.info(f"Successfully converted to {mp3_file.name}")
+            return mp3_file
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to convert to MP3: {e}")
+            return None
+    
     def start(self) -> bool:
         """Start the recording session."""
         try:
@@ -414,6 +437,13 @@ class RecordingSession:
                 relative_path = str(self.session_file.relative_to(self.metadata_manager.data_dir))
                 self.metadata["recording_files"].append(relative_path)
                 
+                # Convert to MP3 if requested
+                if self.convert_to_mp3:
+                    mp3_file = self._convert_to_mp3(self.session_file)
+                    if mp3_file:
+                        relative_mp3_path = str(mp3_file.relative_to(self.metadata_manager.data_dir))
+                        self.metadata["recording_files"].append(relative_mp3_path)
+                
                 # Update metadata with new recording file and status
                 self.metadata_manager.update_meeting_metadata(
                     project_id=self.project_id,
@@ -435,8 +465,10 @@ class RecorderCLI:
         self,
         title: str,
         project_id: Optional[str] = None,
+        convert_to_mp3: bool = True,
     ):
         self.title = title
+        self.convert_to_mp3 = convert_to_mp3
         self.metadata_manager = UnifiedMetadataManager()
         
         # If no project_id provided, get from metadata manager
@@ -459,6 +491,7 @@ class RecorderCLI:
 
 Session: {self.title}
 Project: {self.project_id}
+Convert to MP3: {'Yes' if self.convert_to_mp3 else 'No'}
 
 - Press Ctrl+C to exit
 """)
@@ -477,7 +510,8 @@ Project: {self.project_id}
                         self.session = RecordingSession(
                             title=self.title,
                             project_id=self.project_id,
-                            metadata_manager=self.metadata_manager
+                            metadata_manager=self.metadata_manager,
+                            convert_to_mp3=self.convert_to_mp3
                         )
                         if self.session.start():
                             print(f"Recording to: {self.session.session_file.name}")
@@ -486,6 +520,8 @@ Project: {self.project_id}
                             input()
                             print("Stopping recording...")
                             self.session.stop()
+                            if self.convert_to_mp3:
+                                print("MP3 conversion complete.")
                             self.session = None
                             print("Recording stopped. Press Enter to start a new recording or Ctrl+C to exit.")
                             input()
@@ -518,6 +554,7 @@ Project: {self.project_id}
 def main(
     title: str,
     project_id: Optional[str] = None,
+    convert_to_mp3: bool = True,  # Changed default to True to match RecorderCLI
 ):
     """
     Start a recording session.
@@ -525,9 +562,10 @@ def main(
     Args:
         title: Recording session title
         project_id: Optional project ID (uses default project if not provided)
+        convert_to_mp3: Whether to convert the WAV recording to MP3 after stopping (default: True)
     """
-    logger.info(f"Starting main function with title: {title}, project_id: {project_id}")
-    cli = RecorderCLI(title=title, project_id=project_id)
+    logger.info(f"Starting main function with title: {title}, project_id: {project_id}, convert_to_mp3: {convert_to_mp3}")
+    cli = RecorderCLI(title=title, project_id=project_id, convert_to_mp3=convert_to_mp3)
     cli.run()
 
 if __name__ == "__main__":

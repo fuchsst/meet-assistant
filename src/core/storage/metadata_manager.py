@@ -1,136 +1,160 @@
-"""Unified metadata management system for the Meeting Assistant."""
-import json
+"""Unified metadata management system for the Meeting Assistant using Snowflake."""
 import logging
-import shutil
-from pathlib import Path
-from typing import Dict, Optional, Any, List, Union
 from datetime import datetime
+from typing import Dict, Optional, Any, List, Union
 import uuid
-import yaml
-import jsonschema
 from slugify import slugify
-
-from config.config import DATA_DIR
+from snowflake.snowpark import Session
+from snowflake.snowpark.functions import current_timestamp, col
 
 logger = logging.getLogger(__name__)
 
 class UnifiedMetadataManager:
     """Centralized metadata management system combining project, meeting, and content metadata."""
     
-    def __init__(self):
-        """Initialize the unified metadata manager."""
-        self.data_dir = DATA_DIR / "projects"  # Base all project data under projects/
-        self.config_path = DATA_DIR / "projects.yaml"
-        self.schema_path = Path("config/projects_schema.json")
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, session: Session):
+        """Initialize the unified metadata manager.
         
-        # Load schema for validation
-        with open(self.schema_path, 'r') as f:
-            self.project_schema = json.load(f)
-    
-    def _get_meetings_dir(self, project_id: str) -> Path:
-        """Get project-specific meetings directory."""
-        return self.data_dir / project_id / "meetings"
-    
-    def _get_documents_dir(self, project_id: str) -> Path:
-        """Get project-specific documents directory."""
-        return self.data_dir / project_id / "documents"
-    
-    def _load_project_config(self) -> Dict:
-        """Load and validate project configuration."""
-        try:
-            if self.config_path.exists():
-                with open(self.config_path, 'r') as f:
-                    config = yaml.safe_load(f)
-                    jsonschema.validate(instance=config, schema=self.project_schema)
-                    return config
-            return {"projects": [], "default_project": None}
-        except jsonschema.exceptions.ValidationError as e:
-            logger.error(f"Project config validation error: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error loading project config: {e}")
-            return {"projects": [], "default_project": None}
-    
-    def _load_project_metadata(self, project_id: str) -> Dict:
-        """Load project-specific metadata."""
-        metadata_path = self.data_dir / project_id / "project_metadata.json"
-        try:
-            if metadata_path.exists():
-                with open(metadata_path, 'r') as f:
-                    return json.load(f)
-            return {
-                "meetings": {},
-                "documents": {
-                    "confluence": {},
-                    "jira": {},
-                    "web": {}
-                },
-                "last_updated": datetime.utcnow().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Error loading project metadata: {e}")
-            return {}
-    
-    def _save_project_metadata(self, project_id: str, metadata: Dict):
-        """Save project-specific metadata."""
-        try:
-            metadata_path = self.data_dir / project_id / "project_metadata.json"
-            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        Args:
+            session: Snowflake session object
             
-            # Update last modified timestamp
-            metadata["last_updated"] = datetime.utcnow().isoformat()
+        Note:
+            Requires either project_assistant_admin or project_assistant_service role
+            for accessing pa_core schema tables.
             
-            # Atomic write using temporary file
-            temp_path = metadata_path.with_suffix('.tmp')
-            with open(temp_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            temp_path.replace(metadata_path)
-            
-        except Exception as e:
-            logger.error(f"Error saving project metadata: {e}")
-            raise
-    
-    # Project Management
-    
+        Raises:
+            ValueError: If current role does not have required access
+        """
+        self.session = session
+        
+        # Verify role access
+        current_role = self.session.sql("SELECT CURRENT_ROLE()").collect()[0][0]
+        if current_role not in ['PROJECT_ASSISTANT_ADMIN', 'PROJECT_ASSISTANT_SERVICE']:
+            raise ValueError(
+                f"Current role {current_role} does not have required access. "
+                "Must be project_assistant_admin or project_assistant_service."
+            )
+        
+        # Get table references from pa_core schema
+        self.projects_table = self.session.table("pa_core.projects")
+        self.meetings_table = self.session.table("pa_core.meetings") 
+        self.documents_table = self.session.table("pa_core.documents")
+        
+        # Store role for access control
+        self.is_admin = current_role == 'PROJECT_ASSISTANT_ADMIN'
+
     def get_project(self, project_id: Optional[str] = None) -> Dict:
-        """Get project configuration."""
-        config = self._load_project_config()
+        """Get project configuration.
         
+        Args:
+            project_id: Optional project ID. If not provided, returns first project.
+            
+        Returns:
+            Dict containing project configuration
+            
+        Raises:
+            ValueError: If no projects exist or project not found
+            
+        Note:
+            Accessible by both project_assistant_admin and project_assistant_service roles
+        """
         if not project_id:
-            project_id = config.get("default_project")
-            if not project_id:
-                raise ValueError("No project ID provided and no default project set")
+            # Get default project from first project found
+            df = self.projects_table.limit(1)
+            if df.count() == 0:
+                raise ValueError("No projects exist and no project ID provided")
+            project = df.collect()[0].as_dict()
+        else:
+            df = self.projects_table.filter(col("project_id") == project_id)
+            if df.count() == 0:
+                raise ValueError(f"Project not found: {project_id}")
+            project = df.collect()[0].as_dict()
+            
+        return project
+
+    def create_project(self, project_id: str, name: str, description: str = "", config: Dict = None):
+        """Create a new project.
         
-        for project in config.get("projects", []):
-            if project.get("key") == project_id:
-                return project
-        raise ValueError(f"Project not found: {project_id}")
-    
-    def set_default_project(self, project_id: str):
-        """Set the default project."""
-        config = self._load_project_config()
+        Args:
+            project_id: Unique project identifier
+            name: Project name
+            description: Optional project description
+            config: Optional project configuration
+            
+        Raises:
+            PermissionError: If current role is not project_assistant_admin
+        """
+        if not self.is_admin:
+            raise PermissionError(
+                "Only project_assistant_admin role can create projects"
+            )
+        project_data = {
+            "project_id": project_id,
+            "name": name,
+            "description": description,
+            "pinned_documents": [],
+            "config": config or {},
+            "created_at": current_timestamp(),
+            "updated_at": current_timestamp()
+        }
+        self.projects_table.insert([project_data])
+
+    def update_project(self, project_id: str, updates: Dict):
+        """Update project metadata.
         
+        Args:
+            project_id: Project to update
+            updates: Dictionary of fields to update
+            
+        Raises:
+            PermissionError: If current role is not project_assistant_admin
+            ValueError: If project_id does not exist
+        """
+        if not self.is_admin:
+            raise PermissionError(
+                "Only project_assistant_admin role can update projects"
+            )
+            
         # Verify project exists
-        if not any(p.get("key") == project_id for p in config.get("projects", [])):
+        if self.projects_table.filter(col("project_id") == project_id).count() == 0:
             raise ValueError(f"Project not found: {project_id}")
-        
-        config["default_project"] = project_id
-        with open(self.config_path, 'w') as f:
-            yaml.dump(config, f)
-    
-    # Content Management
-    
+            
+        updates["updated_at"] = current_timestamp()
+        self.projects_table.update(
+            updates,
+            col("project_id") == project_id
+        )
+
     def get_content_metadata(
         self,
         project_id: str,
         source_type: str,
         content_id: str
     ) -> Optional[Dict]:
-        """Get metadata for specific content."""
-        metadata = self._load_project_metadata(project_id)
-        return metadata.get("documents", {}).get(source_type, {}).get(content_id)
-    
+        """Get metadata for specific content.
+        
+        Args:
+            project_id: Project containing the content
+            source_type: Type of content (e.g., 'confluence', 'jira', 'slack')
+            content_id: Unique content identifier
+            
+        Returns:
+            Dict containing content metadata if found, None otherwise
+            
+        Note:
+            Accessible by both project_assistant_admin and project_assistant_service roles
+        """
+        df = self.documents_table.filter(
+            (col("project_id") == project_id) &
+            (col("source_type") == source_type) &
+            (col("content_id") == content_id)
+        )
+        
+        if df.count() == 0:
+            return None
+            
+        return df.collect()[0].as_dict()
+
     def update_content_metadata(
         self,
         project_id: str,
@@ -138,22 +162,60 @@ class UnifiedMetadataManager:
         content_id: str,
         metadata: Dict
     ):
-        """Update metadata for specific content."""
-        project_metadata = self._load_project_metadata(project_id)
+        """Update metadata for specific content.
         
-        if "documents" not in project_metadata:
-            project_metadata["documents"] = {}
-        if source_type not in project_metadata["documents"]:
-            project_metadata["documents"][source_type] = {}
+        Args:
+            project_id: Project containing the content
+            source_type: Type of content (e.g., 'confluence', 'jira', 'slack')
+            content_id: Unique content identifier
+            metadata: Content metadata to update
+            
+        Raises:
+            PermissionError: If current role is not project_assistant_admin
+            ValueError: If project_id does not exist
+        """
+        if not self.is_admin:
+            raise PermissionError(
+                "Only project_assistant_admin role can update content metadata"
+            )
+            
+        # Verify project exists
+        if self.projects_table.filter(col("project_id") == project_id).count() == 0:
+            raise ValueError(f"Project not found: {project_id}")
+        # Check if record exists
+        df = self.documents_table.filter(
+            (col("project_id") == project_id) &
+            (col("source_type") == source_type) &
+            (col("content_id") == content_id)
+        )
         
-        project_metadata["documents"][source_type][content_id] = {
-            **metadata,
-            "last_processed": datetime.utcnow().isoformat(),
-            "version": metadata.get("version", 0) + 1
+        update_data = {
+            "metadata": metadata,
+            "version": metadata.get("version", 0) + 1,
+            "token_count": metadata.get("token_count"),
+            "updated_at": current_timestamp()
         }
         
-        self._save_project_metadata(project_id, project_metadata)
-    
+        if df.count() == 0:
+            # Insert new record
+            insert_data = {
+                "content_id": content_id,
+                "project_id": project_id,
+                "source_type": source_type,
+                "title": metadata.get("title"),
+                "content_hash": metadata.get("content_hash"),
+                **update_data
+            }
+            self.documents_table.insert([insert_data])
+        else:
+            # Update existing record
+            self.documents_table.update(
+                update_data,
+                (col("project_id") == project_id) &
+                (col("source_type") == source_type) &
+                (col("content_id") == content_id)
+            )
+
     def should_process_content(
         self,
         project_id: str,
@@ -161,7 +223,21 @@ class UnifiedMetadataManager:
         content_id: str,
         current_metadata: Dict
     ) -> bool:
-        """Check if content should be processed based on changes."""
+        """Check if content should be processed based on changes.
+        
+        Args:
+            project_id: Project containing the content
+            source_type: Type of content (e.g., 'confluence', 'jira', 'slack')
+            content_id: Unique content identifier
+            current_metadata: Current content metadata to compare against stored
+            
+        Returns:
+            bool: True if content should be processed, False otherwise
+            
+        Note:
+            Accessible by both project_assistant_admin and project_assistant_service roles
+            Returns True if content does not exist or if any tracked fields have changed
+        """
         stored_metadata = self.get_content_metadata(project_id, source_type, content_id)
         
         if not stored_metadata:
@@ -173,100 +249,220 @@ class UnifiedMetadataManager:
                     return True
         
         return False
-    
-    def get_content_path(
-        self,
-        project_id: str,
-        source_type: str,
-        content_id: str
-    ) -> Path:
-        """Get content storage path."""
-        content_dir = self._get_documents_dir(project_id) / source_type
-        content_dir.mkdir(parents=True, exist_ok=True)
-        return content_dir / f"{content_id}.md"
-    
-    # Meeting Management
-    
+
     def generate_meeting_id(self, title: str) -> str:
-        """Generate unique meeting ID based on current date and slugified title."""
+        """Generate unique meeting ID based on current date and slugified title.
+        
+        Args:
+            title: Meeting title to use for ID generation
+            
+        Returns:
+            str: Generated meeting ID in format 'YYYYMMDD_slugified_title'
+            
+        Note:
+            Accessible by both project_assistant_admin and project_assistant_service roles
+            Uses current date and slugified title to ensure uniqueness and readability
+        """
         date_str = datetime.now().strftime("%Y%m%d")
         title_slug = slugify(title)
         return f"{date_str}_{title_slug}"
-    
-    def get_meeting_dir(self, project_id: str, meeting_id: str) -> Path:
-        """Get meeting directory path."""
-        meetings_dir = self._get_meetings_dir(project_id)
-        meetings_dir.mkdir(parents=True, exist_ok=True)
-        return meetings_dir / meeting_id
-    
+
     def update_meeting_metadata(
         self,
         project_id: str,
         meeting_id: str,
         metadata: Dict
     ):
-        """Update meeting metadata."""
-        project_metadata = self._load_project_metadata(project_id)
+        """Update meeting metadata.
         
-        if "meetings" not in project_metadata:
-            project_metadata["meetings"] = {}
+        Args:
+            project_id: Project containing the meeting
+            meeting_id: Meeting to update
+            metadata: Meeting metadata to update
+            
+        Raises:
+            PermissionError: If current role is not project_assistant_admin
+            ValueError: If project_id does not exist
+        """
+        if not self.is_admin:
+            raise PermissionError(
+                "Only project_assistant_admin role can update meeting metadata"
+            )
+            
+        # Verify project exists
+        if self.projects_table.filter(col("project_id") == project_id).count() == 0:
+            raise ValueError(f"Project not found: {project_id}")
+        # Check if record exists
+        df = self.meetings_table.filter(
+            (col("project_id") == project_id) &
+            (col("meeting_id") == meeting_id)
+        )
         
-        # Ensure required fields are present
-        meeting_metadata = {
-            **project_metadata["meetings"].get(meeting_id, {}),
-            **metadata,
-            "project_id": project_id,
-            "last_modified": datetime.utcnow().isoformat(),
+        update_data = {
+            "metadata": metadata,
             "status": metadata.get("status", "in_progress"),
             "participants": metadata.get("participants", []),
-            "related_documents": metadata.get("related_documents", [])
+            "related_documents": metadata.get("related_documents", []),
+            "updated_at": current_timestamp()
         }
         
-        project_metadata["meetings"][meeting_id] = meeting_metadata
-        self._save_project_metadata(project_id, project_metadata)
-    
+        if df.count() == 0:
+            # Insert new record
+            insert_data = {
+                "meeting_id": meeting_id,
+                "project_id": project_id,
+                "title": metadata.get("title"),
+                **update_data
+            }
+            self.meetings_table.insert([insert_data])
+        else:
+            # Update existing record
+            self.meetings_table.update(
+                update_data,
+                (col("project_id") == project_id) &
+                (col("meeting_id") == meeting_id)
+            )
+
     def get_meeting_metadata(
         self,
         project_id: str,
         meeting_id: Optional[str] = None
     ) -> Dict:
-        """Get meeting metadata."""
-        project_metadata = self._load_project_metadata(project_id)
-        if meeting_id:
-            return project_metadata.get("meetings", {}).get(meeting_id, {})
-        return project_metadata.get("meetings", {})
-    
-    def get_meeting_files(self, project_id: str, meeting_id: str) -> Dict[str, Path]:
-        """Get meeting file paths.
-        - Final transcript is saved as transcript.md
-        - Analysis is saved as analysis.md
+        """Get meeting metadata.
+        
+        Args:
+            project_id: Project containing the meeting(s)
+            meeting_id: Optional specific meeting ID. If not provided, returns all meetings.
+            
+        Returns:
+            Dict: If meeting_id provided, returns meeting metadata dict.
+                 If no meeting_id, returns dict of {meeting_id: metadata} for all meetings.
+                 Returns empty dict if meeting not found.
+            
+        Note:
+            Accessible by both project_assistant_admin and project_assistant_service roles
+            
+        Example:
+            >>> get_meeting_metadata("project1", "20240315_daily_standup")
+            {'meeting_id': '20240315_daily_standup', 'title': 'Daily Standup', ...}
+            
+            >>> get_meeting_metadata("project1")
+            {'20240315_daily_standup': {...}, '20240316_sprint_planning': {...}}
         """
-        meeting_dir = self.get_meeting_dir(project_id, meeting_id)
-        return {
-            "transcript": meeting_dir / "transcript.md", 
-            "analysis": meeting_dir / "analysis.md"
-        }
-    
-    def create_meeting_backup(self, project_id: str, meeting_id: str) -> Path:
-        """Create meeting backup."""
-        meeting_dir = self.get_meeting_dir(project_id, meeting_id)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = self._get_meetings_dir(project_id) / "backups" / f"{meeting_id}_{timestamp}"
-        
-        backup_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(meeting_dir, backup_dir)
-        
-        return backup_dir
-    
+        if meeting_id:
+            df = self.meetings_table.filter(
+                (col("project_id") == project_id) &
+                (col("meeting_id") == meeting_id)
+            )
+            if df.count() == 0:
+                return {}
+            return df.collect()[0].as_dict()
+        else:
+            # Return all meetings for project
+            df = self.meetings_table.filter(col("project_id") == project_id)
+            return {row["meeting_id"]: row.as_dict() for row in df.collect()}
+
     def delete_meeting(self, project_id: str, meeting_id: str, backup: bool = True):
-        """Delete meeting data."""
+        """Delete meeting data.
+        
+        Args:
+            project_id: Project ID containing the meeting
+            meeting_id: Meeting to delete
+            backup: If True, soft delete by updating status. If False, hard delete.
+            
+        Raises:
+            PermissionError: If current role is not project_assistant_admin
+            ValueError: If meeting not found
+        """
+        if not self.is_admin:
+            raise PermissionError(
+                "Only project_assistant_admin role can delete meetings"
+            )
+            
+        # Verify meeting exists
+        if self.meetings_table.filter(
+            (col("project_id") == project_id) & 
+            (col("meeting_id") == meeting_id)
+        ).count() == 0:
+            raise ValueError(f"Meeting not found: {meeting_id}")
+            
         if backup:
-            self.create_meeting_backup(project_id, meeting_id)
+            # Soft delete
+            self.meetings_table.update(
+                {
+                    "status": "deleted",
+                    "updated_at": current_timestamp()
+                },
+                (col("project_id") == project_id) &
+                (col("meeting_id") == meeting_id)
+            )
+        else:
+            # Hard delete if explicitly requested
+            self.meetings_table.delete(
+                (col("project_id") == project_id) &
+                (col("meeting_id") == meeting_id)
+            )
+
+    def pin_document(self, project_id: str, content_id: str, source_type: str):
+        """Pin a document to a project.
         
-        meeting_dir = self.get_meeting_dir(project_id, meeting_id)
-        shutil.rmtree(meeting_dir)
+        Args:
+            project_id: Project to pin document to
+            content_id: Document content ID
+            source_type: Type of content (e.g., 'confluence', 'jira', 'slack')
+            
+        Raises:
+            PermissionError: If current role is not project_assistant_admin
+            ValueError: If project or document not found
+        """
+        if not self.is_admin:
+            raise PermissionError(
+                "Only project_assistant_admin role can pin documents"
+            )
+            
+        # Verify document exists
+        if self.documents_table.filter(
+            (col("project_id") == project_id) &
+            (col("source_type") == source_type) &
+            (col("content_id") == content_id)
+        ).count() == 0:
+            raise ValueError(f"Document not found: {content_id}")
+        project = self.get_project(project_id)
+        pinned_docs = project.get("pinned_documents", [])
+        doc_ref = f"{source_type}:{content_id}"
         
-        project_metadata = self._load_project_metadata(project_id)
-        if meeting_id in project_metadata.get("meetings", {}):
-            del project_metadata["meetings"][meeting_id]
-            self._save_project_metadata(project_id, project_metadata)
+        if doc_ref not in pinned_docs:
+            pinned_docs.append(doc_ref)
+            self.update_project(project_id, {"pinned_documents": pinned_docs})
+
+    def unpin_document(self, project_id: str, content_id: str, source_type: str):
+        """Unpin a document from a project.
+        
+        Args:
+            project_id: Project to unpin document from
+            content_id: Document content ID
+            source_type: Type of content (e.g., 'confluence', 'jira', 'slack')
+            
+        Raises:
+            PermissionError: If current role is not project_assistant_admin
+            ValueError: If project or document not found
+        """
+        if not self.is_admin:
+            raise PermissionError(
+                "Only project_assistant_admin role can unpin documents"
+            )
+            
+        # Verify document exists
+        if self.documents_table.filter(
+            (col("project_id") == project_id) &
+            (col("source_type") == source_type) &
+            (col("content_id") == content_id)
+        ).count() == 0:
+            raise ValueError(f"Document not found: {content_id}")
+        project = self.get_project(project_id)
+        pinned_docs = project.get("pinned_documents", [])
+        doc_ref = f"{source_type}:{content_id}"
+        
+        if doc_ref in pinned_docs:
+            pinned_docs.remove(doc_ref)
+            self.update_project(project_id, {"pinned_documents": pinned_docs})

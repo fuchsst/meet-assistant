@@ -282,27 +282,40 @@ class JiraFetcher:
             logger.debug(f"Fetching epic {epic_key} details")
             epic = self.client.issue(epic_key, fields='*all')
             
+            if not epic:
+                logger.error(f"Failed to fetch epic {epic_key}: Epic not found")
+                return None
+            
+            logger.debug(f"Epic {epic_key} details: {epic}")
+            
             # Extract epic metadata
-            assignee_id = epic['fields'].get('assignee', {}).get('accountId', '')
-            reporter_id = epic['fields'].get('reporter', {}).get('accountId', '')
+            epic_fields = epic.get('fields', {})
+            if not epic_fields:
+                logger.error(f"Epic {epic_key} has no fields")
+                return None
+
+            assignee_id = epic_fields.get('assignee', {}).get('accountId', '')
+            reporter_id = epic_fields.get('reporter', {}).get('accountId', '')
             
             epic_metadata = {
-                "title": epic['fields']['summary'],
+                "title": epic_fields.get('summary', ''),
                 "ticket_id": epic_key,
                 "type": "epic",
-                "status": epic['fields']['status']['name'],
-                "created": epic['fields']['created'],
-                "last_updated": epic['fields']['updated'],
-                "priority": epic['fields'].get('priority', {}).get('name', 'None'),
+                "status": epic_fields.get('status', {}).get('name', ''),
+                "created": epic_fields.get('created', ''),
+                "last_updated": epic_fields.get('updated', ''),
+                "priority": epic_fields.get('priority', {}).get('name', 'None'),
                 "assignee": self.member_mapping.get(assignee_id.lower(), 
-                                                  epic['fields'].get('assignee', {}).get('displayName', 'Unassigned')),
+                                                  epic_fields.get('assignee', {}).get('displayName', 'Unassigned')),
                 "reporter": self.member_mapping.get(reporter_id.lower(),
-                                                  epic['fields'].get('reporter', {}).get('displayName', 'Unknown')),
-                "labels": epic['fields'].get('labels', []),
-                "components": [c['name'] for c in epic['fields'].get('components', [])],
-                "epic_name": epic['fields'].get('customfield_10011', ''),  # Epic Name field
-                "content_hash": hash(str(epic['fields']))
+                                                  epic_fields.get('reporter', {}).get('displayName', 'Unknown')),
+                "labels": epic_fields.get('labels', []),
+                "components": [c.get('name', '') for c in epic_fields.get('components', [])],
+                "epic_name": epic_fields.get('customfield_10011', ''),  # Epic Name field
+                "content_hash": hash(str(epic_fields))
             }
+            
+            logger.debug(f"Epic {epic_key} metadata: {epic_metadata}")
             
             # Check if epic content needs processing
             epic_needs_processing = self.metadata_manager.should_process_content(
@@ -427,66 +440,36 @@ class JiraFetcher:
             epic_data: Dict containing epic and issues data
             
         Returns:
-            Dict with file paths and metadata
+            Dict with metadata
         """
         try:
             logger.info("Saving epic and issues content")
             # Save epic
             epic = epic_data["epic"]
-            epic_path = self.metadata_manager.get_content_path(
+            self.metadata_manager.update_content_metadata(
                 self.project_id,
                 "jira",
-                f"{epic['metadata']['ticket_id']}"
+                epic["metadata"]["ticket_id"],
+                epic["metadata"]
             )
-            epic_path.write_text(epic["content"])
-            logger.debug(f"Saved epic content to {epic_path}")
+            logger.debug(f"Saved epic content for {epic['metadata']['ticket_id']}")
             
             # Save issues
             saved_issues = []
             logger.info(f"Saving {len(epic_data['issues'])} issues")
             for issue in epic_data["issues"]:
-                issue_path = self.metadata_manager.get_content_path(
+                self.metadata_manager.update_content_metadata(
                     self.project_id,
                     "jira",
-                    f"{issue['metadata']['ticket_id']}"
+                    issue["metadata"]["ticket_id"],
+                    issue["metadata"]
                 )
-                issue_path.write_text(issue["content"])
-                logger.debug(f"Saved issue content to {issue_path}")
-                saved_issues.append({
-                    "title": issue["metadata"]["title"],
-                    "path": str(issue_path.relative_to(DATA_DIR)),
-                    "ticket_id": issue["metadata"]["ticket_id"],
-                    "type": issue["metadata"]["type"],
-                    "status": issue["metadata"]["status"],
-                    "created": issue["metadata"]["created"],
-                    "last_changed": issue["metadata"]["last_updated"],
-                    "priority": issue["metadata"]["priority"],
-                    "assignee": issue["metadata"]["assignee"],
-                    "reporter": issue["metadata"]["reporter"],
-                    "labels": issue["metadata"].get("labels", []),
-                    "components": issue["metadata"].get("components", []),
-                    "parent_epic": issue["metadata"]["parent_epic"],
-                    "content_hash": issue["metadata"]["content_hash"]
-                })
+                logger.debug(f"Saved issue content for {issue['metadata']['ticket_id']}")
+                saved_issues.append(issue["metadata"])
             
             # Return combined metadata
             result = {
-                "epic": {
-                    "title": epic["metadata"]["title"],
-                    "path": str(epic_path.relative_to(DATA_DIR)),
-                    "ticket_id": epic["metadata"]["ticket_id"],
-                    "type": epic["metadata"]["type"],
-                    "status": epic["metadata"]["status"],
-                    "created": epic["metadata"]["created"],
-                    "last_changed": epic["metadata"]["last_updated"],
-                    "priority": epic["metadata"]["priority"],
-                    "assignee": epic["metadata"]["assignee"],
-                    "reporter": epic["metadata"]["reporter"],
-                    "labels": epic["metadata"].get("labels", []),
-                    "components": epic["metadata"].get("components", []),
-                    "epic_name": epic["metadata"].get("epic_name"),
-                    "content_hash": epic["metadata"]["content_hash"]
-                },
+                "epic": epic["metadata"],
                 "issues": saved_issues
             }
             
@@ -516,18 +499,10 @@ def fetch_jira_epics(
     """
     try:
         logger.info("Starting Jira epic fetch process")
+        metadata_manager = UnifiedMetadataManager()
+        
         # Load project config
-        if project_config:
-            config_path = Path(project_config)
-        else:
-            config_path = DATA_DIR / "projects.yaml"
-        
-        if not config_path.exists():
-            logger.error(f"Project config not found at {config_path}")
-            raise ValueError(f"Project config not found: {config_path}")
-        
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
+        config = metadata_manager._load_project_config()
         
         # Process each project
         for project in config.get("projects", []):
@@ -535,7 +510,6 @@ def fetch_jira_epics(
                 logger.debug(f"Skipping project {project.get('key', 'unknown')} - no Jira configuration")
                 continue
             
-            project_metadata = []
             logger.info(f"Processing project: {project['key']}")
             
             # Initialize fetcher with project ID
@@ -546,18 +520,32 @@ def fetch_jira_epics(
                 try:
                     logger.info(f"Processing epic: {epic['id']} - {epic['title']}")
                     epic_data = fetcher.fetch_epic_with_issues(epic["id"])
-                    metadata = fetcher.save_epic_with_issues(epic_data)
-                    project_metadata.append(metadata)
-                    logger.info(f"Successfully processed epic: {epic['id']} - {epic['title']}")
+                    if epic_data:
+                        metadata = fetcher.save_epic_with_issues(epic_data)
+                        # Update epic metadata
+                        metadata_manager.update_content_metadata(
+                            project["key"],
+                            "jira",
+                            epic["id"],
+                            metadata["epic"]
+                        )
+                        # Update issue metadata
+                        for issue in metadata["issues"]:
+                            metadata_manager.update_content_metadata(
+                                project["key"],
+                                "jira",
+                                issue["ticket_id"],
+                                issue
+                            )
+                        logger.info(f"Successfully processed epic: {epic['id']} - {epic['title']}")
+                    else:
+                        logger.warning(f"No data returned for epic: {epic['id']} - {epic['title']}")
                 except Exception as e:
-                    logger.error(f"Error processing epic {epic['id']}: {e}")
+                    logger.error(f"Error processing epic {epic['id']}: {e}", exc_info=True)
                     continue
             
-            # Save project metadata
-            if project_metadata:
-                logger.info(f"Successfully processed {len(project_metadata)} epics for project {project['key']}")
-                logger.info(f"Content saved to: {DATA_DIR / project['key'] / 'jira'}")
-                logger.info(f"Metadata saved to: {DATA_DIR / project['key'] / 'project_metadata.json'}")
+            logger.info(f"Successfully processed epics for project {project['key']}")
+            logger.info(f"Content saved to: {metadata_manager._get_documents_dir(project['key']) / 'jira'}")
         
     except Exception as e:
         logger.error(f"Failed to fetch Jira epics: {e}", exc_info=True)

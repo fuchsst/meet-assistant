@@ -5,18 +5,17 @@ import json
 from pathlib import Path
 import time
 from crewai import Agent, Task, Crew, Process
-from crewai import LLM
-
+from src.core.ai.bedrock_llm import BedrockLLM
 from config.config import LLM_CONFIG
 
 logger = logging.getLogger(__name__)
 
 class LLMClient:
-    """Handles LLM-based text analysis using CrewAI."""
+    """Handles LLM-based text analysis using CrewAI with AWS Bedrock."""
 
     def __init__(self):
-        """Initialize LLM client with agents."""
-        self.llm = LLM(
+        """Initialize LLM client with agents using AWS Bedrock."""
+        self.llm = BedrockLLM(
             model=LLM_CONFIG["model"],
             temperature=LLM_CONFIG["temperature"],
             max_tokens=LLM_CONFIG["max_tokens"],

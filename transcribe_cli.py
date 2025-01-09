@@ -1,17 +1,20 @@
-"""CLI script for transcribing WAV files to VTT format using Faster Whisper."""
+"""CLI script for transcribing WAV/MP3 files to VTT format using Faster Whisper or AWS Transcribe."""
 import logging
 import os
 from pathlib import Path
 import sys
 import time
-from typing import Optional, Dict, List, Set
+from typing import Optional, Dict, List, Set, Protocol
 from datetime import datetime, timezone
 import fire
 import torch
+import boto3
 from faster_whisper import WhisperModel
 import numpy as np
+import json
+import uuid
 
-from config.config import WHISPER_CONFIG, MODELS_DIR
+from config.config import WHISPER_CONFIG, AWS_TRANSCRIBE_CONFIG, MODELS_DIR
 from src.core.storage.metadata_manager import UnifiedMetadataManager
 from src.core.utils.logging_config import setup_logging
 
@@ -28,8 +31,282 @@ def get_local_now() -> datetime:
     """Helper function to get current local time as a timezone-aware datetime object."""
     return datetime.now().astimezone()
 
+def get_media_format(file_path: Path) -> str:
+    """Determine media format from file extension."""
+    ext = file_path.suffix.lower()
+    if ext == '.wav':
+        return 'wav'
+    elif ext == '.mp3':
+        return 'mp3'
+    else:
+        raise ValueError(f"Unsupported file format: {ext}")
+
+class TranscriberProtocol(Protocol):
+    """Protocol defining the interface for transcription classes."""
+    
+    def transcribe_file(self, audio_path: Path, output_path: Optional[Path] = None) -> Optional[Path]:
+        """Transcribe a single audio file to VTT."""
+        ...
+    
+    def transcribe_meeting(
+        self,
+        project_id: Optional[str],
+        meeting_id: str,
+        language: Optional[str] = None
+    ) -> List[Path]:
+        """Transcribe audio files listed in meeting metadata."""
+        ...
+
+class AWSTranscriber:
+    """Handles transcription of audio files using AWS Transcribe."""
+    
+    def __init__(self, language: Optional[str] = None):
+        """Initialize AWS transcriber.
+        
+        Args:
+            language: Language for transcription (default: None, will auto-detect)
+        """
+        self.language = language or 'en-US'  # AWS Transcribe requires explicit language
+        self.metadata_manager = UnifiedMetadataManager()
+        
+        # Initialize AWS clients
+        self.transcribe = boto3.client('transcribe', region_name=AWS_TRANSCRIBE_CONFIG['region'])
+        self.s3 = boto3.client('s3', region_name=AWS_TRANSCRIBE_CONFIG['region'])
+        
+        if not AWS_TRANSCRIBE_CONFIG['input_bucket'] or not AWS_TRANSCRIBE_CONFIG['output_bucket']:
+            raise ValueError("AWS S3 buckets must be configured for AWS Transcribe")
+    
+    def _get_s3_path(self, file_path: Path, bucket_type: str = 'input') -> tuple[str, str]:
+        """Get S3 bucket and key for a file, maintaining project structure.
+        
+        Args:
+            file_path: Local file path
+            bucket_type: Either 'input' or 'output'
+            
+        Returns:
+            Tuple of (bucket, key)
+        """
+        # Get relative path from data directory
+        rel_path = file_path.relative_to(self.metadata_manager.data_dir)
+        # Use relative path as S3 key to maintain project structure
+        bucket = AWS_TRANSCRIBE_CONFIG[f'{bucket_type}_bucket']
+        key = str(rel_path)
+        return bucket, key
+    
+    def _upload_to_s3(self, file_path: Path) -> str:
+        """Upload file to S3 input bucket maintaining project structure."""
+        bucket, key = self._get_s3_path(file_path, 'input')
+        self.s3.upload_file(str(file_path), bucket, key)
+        return f"s3://{bucket}/{key}"
+    
+    def _convert_to_vtt(self, transcript: dict, output_path: Path) -> None:
+        """Convert AWS transcript to VTT format."""
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write("WEBVTT\n\n")
+                
+                items = transcript['results']['items']
+                current_segment = []
+                
+                for item in items:
+                    if item['type'] == 'pronunciation':
+                        current_segment.append(item)
+                        
+                        # Start new segment on punctuation or long pause
+                        if len(current_segment) > 0 and (
+                            float(item.get('end_time', 0)) - float(current_segment[0].get('start_time', 0)) > 5
+                        ):
+                            # Write segment
+                            start_time = float(current_segment[0]['start_time'])
+                            end_time = float(item['end_time'])
+                            
+                            text = ' '.join(item['alternatives'][0]['content'] 
+                                          for item in current_segment)
+                            
+                            # Format timestamps
+                            start = f"{int(start_time//3600):02d}:{int((start_time%3600)//60):02d}:{start_time%60:06.3f}"
+                            end = f"{int(end_time//3600):02d}:{int((end_time%3600)//60):02d}:{end_time%60:06.3f}"
+                            
+                            f.write(f"{start} --> {end}\n")
+                            f.write(f"{text}\n\n")
+                            
+                            current_segment = []
+                            
+        except Exception as e:
+            logger.error(f"Failed to convert transcript to VTT: {e}")
+            raise
+    
+    def transcribe_file(self, audio_path: Path, output_path: Optional[Path] = None) -> Optional[Path]:
+        """Transcribe a single audio file to VTT using AWS Transcribe."""
+        try:
+            logger.info(f"Starting AWS transcription for: {audio_path}")
+            
+            # Determine output path
+            if output_path is None:
+                output_path = audio_path.with_suffix('.vtt')
+            
+            # Upload file to S3
+            s3_uri = self._upload_to_s3(audio_path)
+            
+            # Get media format
+            media_format = get_media_format(audio_path)
+            
+            # Get output path in S3 (same structure as local, but with .json extension)
+            output_bucket, output_key = self._get_s3_path(output_path.with_suffix('.json'), 'output')
+            
+            # Start transcription job
+            job_name = f"transcribe_{uuid.uuid4()}"
+            self.transcribe.start_transcription_job(
+                TranscriptionJobName=job_name,
+                Media={'MediaFileUri': s3_uri},
+                MediaFormat=media_format,
+                LanguageCode=self.language,
+                OutputBucketName=output_bucket,
+                OutputKey=output_key,
+                Settings={
+                    'ShowSpeakerLabels': True,
+                    'MaxSpeakerLabels': 10
+                }
+            )
+            
+            logger.info("Waiting for transcription job to complete...")
+            while True:
+                status = self.transcribe.get_transcription_job(TranscriptionJobName=job_name)
+                job_status = status['TranscriptionJob']['TranscriptionJobStatus']
+                
+                if job_status == 'COMPLETED':
+                    logger.info("Transcription completed. Retrieving transcript...")
+                    
+                    # Get transcript from S3 using the same path structure
+                    response = self.s3.get_object(
+                        Bucket=output_bucket,
+                        Key=output_key
+                    )
+                    transcript = json.loads(response['Body'].read().decode('utf-8'))
+                    
+                    logger.info("Successfully retrieved transcript from S3")
+                    
+                    # Convert to VTT
+                    self._convert_to_vtt(transcript, output_path)
+                    return output_path
+                    
+                elif job_status == 'FAILED':
+                    failure_reason = status['TranscriptionJob'].get('FailureReason', 'Unknown error')
+                    raise Exception(f"Transcription job failed: {failure_reason}")
+                
+                logger.info(f"Not ready yet... Status: {job_status}")
+                time.sleep(5)
+            
+        except Exception as e:
+            logger.error(f"AWS transcription failed: {e}")
+            return None
+    
+    def transcribe_meeting(
+        self,
+        project_id: Optional[str],
+        meeting_id: str,
+        language: Optional[str] = None
+    ) -> List[Path]:
+        """Transcribe audio files listed in meeting metadata using AWS Transcribe."""
+        try:
+            # Get project ID if not provided
+            if not project_id:
+                project = self.metadata_manager.get_project()
+                project_id = project["key"]
+            
+            # Get meeting metadata to check recording files
+            meeting_metadata = self.metadata_manager.get_meeting_metadata(project_id, meeting_id)
+            recording_files = meeting_metadata.get("recording_files", [])
+            vtt_files = meeting_metadata.get("vtt_files", [])
+            
+            if not recording_files:
+                logger.warning("No recording files found in meeting metadata")
+                self.metadata_manager.update_meeting_metadata(
+                    project_id,
+                    meeting_id,
+                    {
+                        "transcription_status": "no_audio_files",
+                        "transcription_end": get_local_now().isoformat()
+                    }
+                )
+                return []
+            
+            # Update metadata to show transcription started
+            self.metadata_manager.update_meeting_metadata(
+                project_id,
+                meeting_id,
+                {
+                    "transcription_status": "in_progress",
+                    "transcription_start": get_local_now().isoformat(),
+                    "language": language or self.language
+                }
+            )
+            
+            # Transcribe audio files that don't have corresponding VTT files
+            created_vtt_files = []
+            for audio_path in recording_files:
+                try:
+                    # Convert relative path from metadata to absolute path
+                    audio_file = self.metadata_manager.data_dir / audio_path
+                    if not audio_file.exists():
+                        logger.warning(f"Audio file not found: {audio_file}")
+                        continue
+                    
+                    # Check if VTT already exists in metadata
+                    vtt_path = str(Path(audio_path).with_suffix('.vtt'))
+                    if vtt_path in vtt_files:
+                        logger.info(f"VTT file already exists in metadata for {audio_file.name}")
+                        created_vtt_files.append(self.metadata_manager.data_dir / vtt_path)
+                        continue
+                    
+                    # Transcribe file
+                    vtt_file = self.transcribe_file(audio_file)
+                    if vtt_file:
+                        created_vtt_files.append(vtt_file)
+                        # Add new VTT file to metadata list
+                        vtt_files.append(str(vtt_file.relative_to(self.metadata_manager.data_dir)))
+                        # Update metadata with new VTT file
+                        self.metadata_manager.update_meeting_metadata(
+                            project_id,
+                            meeting_id,
+                            {"vtt_files": vtt_files}
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to transcribe {audio_path}: {e}")
+                    continue
+            
+            # Update meeting metadata with final status
+            status = "completed" if created_vtt_files else "failed"
+            self.metadata_manager.update_meeting_metadata(
+                project_id,
+                meeting_id,
+                {
+                    "transcription_status": status,
+                    "transcription_end": get_local_now().isoformat(),
+                    "language": self.language,
+                    "vtt_files": vtt_files
+                }
+            )
+            
+            return created_vtt_files
+            
+        except Exception as e:
+            logger.error(f"Failed to transcribe meeting: {e}")
+            # Update metadata to show failure
+            if project_id and meeting_id:
+                self.metadata_manager.update_meeting_metadata(
+                    project_id,
+                    meeting_id,
+                    {
+                        "transcription_status": "failed",
+                        "transcription_error": str(e),
+                        "transcription_end": get_local_now().isoformat()
+                    }
+                )
+            raise
+
 class WhisperTranscriber:
-    """Handles transcription of WAV files using Faster Whisper."""
+    """Handles transcription of audio files using Faster Whisper."""
     
     def __init__(self, language: Optional[str] = None):
         """Initialize transcriber.
@@ -110,12 +387,12 @@ class WhisperTranscriber:
             raise
 
     def transcribe_file(self, audio_path: Path, output_path: Optional[Path] = None) -> Optional[Path]:
-        """Transcribe a single WAV file to VTT.
+        """Transcribe a single audio file to VTT.
         
         Args:
-            audio_path: Path to WAV file
+            audio_path: Path to audio file (WAV or MP3)
             output_path: Optional path for VTT output. If not provided,
-                        will create next to WAV file with .vtt extension.
+                        will create next to audio file with .vtt extension.
         
         Returns:
             Path to created VTT file or None if transcription failed
@@ -175,7 +452,7 @@ class WhisperTranscriber:
         meeting_id: str,
         language: Optional[str] = None
     ) -> List[Path]:
-        """Transcribe WAV files listed in meeting metadata.
+        """Transcribe audio files listed in meeting metadata.
         
         Args:
             project_id: Optional project ID (uses default if not provided)
@@ -219,25 +496,25 @@ class WhisperTranscriber:
                 }
             )
             
-            # Transcribe WAV files that don't have corresponding VTT files
+            # Transcribe audio files that don't have corresponding VTT files
             created_vtt_files = []
-            for wav_path in recording_files:
+            for audio_path in recording_files:
                 try:
                     # Convert relative path from metadata to absolute path
-                    wav_file = self.metadata_manager.data_dir / wav_path
-                    if not wav_file.exists():
-                        logger.warning(f"WAV file not found: {wav_file}")
+                    audio_file = self.metadata_manager.data_dir / audio_path
+                    if not audio_file.exists():
+                        logger.warning(f"Audio file not found: {audio_file}")
                         continue
                     
                     # Check if VTT already exists in metadata
-                    vtt_path = wav_path.replace('.wav', '.vtt')
+                    vtt_path = str(Path(audio_path).with_suffix('.vtt'))
                     if vtt_path in vtt_files:
-                        logger.info(f"VTT file already exists in metadata for {wav_file.name}")
+                        logger.info(f"VTT file already exists in metadata for {audio_file.name}")
                         created_vtt_files.append(self.metadata_manager.data_dir / vtt_path)
                         continue
                     
                     # Transcribe file
-                    vtt_file = self.transcribe_file(wav_file)
+                    vtt_file = self.transcribe_file(audio_file)
                     if vtt_file:
                         created_vtt_files.append(vtt_file)
                         # Add new VTT file to metadata list
@@ -249,7 +526,7 @@ class WhisperTranscriber:
                             {"vtt_files": vtt_files}
                         )
                 except Exception as e:
-                    logger.error(f"Failed to transcribe {wav_path}: {e}")
+                    logger.error(f"Failed to transcribe {audio_path}: {e}")
                     continue
             
             # Update meeting metadata with final status
@@ -282,44 +559,50 @@ class WhisperTranscriber:
                 )
             raise
 
-def monitor_wav_files(transcriber: WhisperTranscriber, project_id: str, meeting_id: str):
-    """Monitor meeting directory for new WAV files.
+def get_transcriber(language: Optional[str] = None) -> TranscriberProtocol:
+    """Get appropriate transcriber based on configuration."""
+    if AWS_TRANSCRIBE_CONFIG['enabled']:
+        return AWSTranscriber(language=language)
+    return WhisperTranscriber(language=language)
+
+def monitor_audio_files(transcriber: TranscriberProtocol, project_id: str, meeting_id: str):
+    """Monitor meeting directory for new audio files (WAV/MP3).
     
     Args:
-        transcriber: WhisperTranscriber instance
+        transcriber: Transcriber instance
         project_id: Project ID
         meeting_id: Meeting ID
     """
     meeting_dir = transcriber.metadata_manager.get_meeting_dir(project_id, meeting_id)
     processed_files: Set[Path] = set()
     
-    print(f"\nMonitoring {meeting_dir} for new WAV files...")
+    print(f"\nMonitoring {meeting_dir} for new audio files...")
     print("Press Ctrl+C to stop monitoring.")
     
     try:
         while True:
-            # Check for new WAV files
-            wav_files = set(meeting_dir.glob("*.wav"))
-            new_files = wav_files - processed_files
+            # Check for new audio files (both WAV and MP3)
+            audio_files = set(meeting_dir.glob("*.wav")) | set(meeting_dir.glob("*.mp3"))
+            new_files = audio_files - processed_files
             
-            for wav_path in new_files:
-                vtt_path = wav_path.with_suffix('.vtt')
+            for audio_path in new_files:
+                vtt_path = audio_path.with_suffix('.vtt')
                 
                 # Only transcribe if VTT doesn't exist
                 if not vtt_path.exists():
-                    logger.info(f"New WAV file detected: {wav_path}")
+                    logger.info(f"New audio file detected: {audio_path}")
                     try:
                         # Get relative path for metadata
-                        rel_wav_path = wav_path.relative_to(transcriber.metadata_manager.data_dir)
+                        rel_audio_path = audio_path.relative_to(transcriber.metadata_manager.data_dir)
                         
-                        # Update metadata with new WAV file
+                        # Update metadata with new audio file
                         metadata = transcriber.metadata_manager.get_meeting_metadata(
                             project_id,
                             meeting_id
                         )
                         recording_files = metadata.get("recording_files", [])
-                        if str(rel_wav_path) not in recording_files:
-                            recording_files.append(str(rel_wav_path))
+                        if str(rel_audio_path) not in recording_files:
+                            recording_files.append(str(rel_audio_path))
                             transcriber.metadata_manager.update_meeting_metadata(
                                 project_id,
                                 meeting_id,
@@ -327,13 +610,13 @@ def monitor_wav_files(transcriber: WhisperTranscriber, project_id: str, meeting_
                             )
                         
                         # Transcribe file
-                        transcriber.transcribe_file(wav_path)
-                        print(f"Transcribed: {wav_path}")
+                        transcriber.transcribe_file(audio_path)
+                        print(f"Transcribed: {audio_path}")
                     except Exception as e:
-                        logger.error(f"Failed to handle new WAV file: {e}")
-                        print(f"Error processing {wav_path}: {e}")
+                        logger.error(f"Failed to handle new audio file: {e}")
+                        print(f"Error processing {audio_path}: {e}")
                 
-                processed_files.add(wav_path)
+                processed_files.add(audio_path)
             
             time.sleep(5)  # Check every 5 seconds
             
@@ -387,7 +670,8 @@ def main(
     meeting_id: Optional[str] = None,
     project_id: Optional[str] = None,
     language: Optional[str] = None,
-    monitor: bool = False
+    monitor: bool = False,
+    use_aws: Optional[bool] = None
 ):
     """Transcribe meeting recordings to VTT format.
     
@@ -395,10 +679,16 @@ def main(
         meeting_id: ID or directory name of the meeting to transcribe
         project_id: Optional project ID (uses default project if not provided)
         language: Language for transcription (default: from config)
-        monitor: Whether to monitor the meeting directory for new WAV files
+        monitor: Whether to monitor the meeting directory for new audio files
+        use_aws: Override to explicitly use AWS Transcribe (True) or Whisper (False).
+                If not provided, uses the value from AWS_TRANSCRIBE_CONFIG.
     """
     try:
-        transcriber = WhisperTranscriber(language=language)
+        # Override AWS config if explicitly specified
+        if use_aws is not None:
+            AWS_TRANSCRIBE_CONFIG['enabled'] = str(use_aws).lower() == 'true'
+            
+        transcriber = get_transcriber(language=language)
         
         # Get project ID if not provided
         if not project_id:
@@ -413,10 +703,11 @@ def main(
         print(f"\nStarting transcription for meeting: {meeting_id}")
         print(f"Project: {project_id}")
         print(f"Language: {language}")
+        print(f"Using {'AWS Transcribe' if AWS_TRANSCRIBE_CONFIG['enabled'] else 'Whisper'}")
         
         # Start file monitoring if requested
         if monitor:
-            monitor_wav_files(transcriber, project_id, meeting_id)
+            monitor_audio_files(transcriber, project_id, meeting_id)
             return
         
         # Otherwise, just transcribe existing files

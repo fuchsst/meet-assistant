@@ -1,0 +1,65 @@
+manifest_version: 1
+version:
+  name: project_assistant
+  patch: 1
+  label: "v1.0"
+  comment: "Initial version of Project Assistant with Snowflake integration"
+
+artifacts:
+  readme: README.md
+  setup_script: scripts/setup.sql
+  default_streamlit: streamlit/app.py
+
+configuration:
+  log_level: DEBUG
+  trace_level: ALWAYS
+
+privileges:
+  - CREATE WAREHOUSE:
+      description: "To create warehouses for executing tasks"
+  - CREATE DATABASE:
+      description: "To create databases for storing project data"
+  - READ SESSION:
+      description: "To allow Streamlit to access some context functions"
+  - EXECUTE TASK:
+      description: "To run scheduled tasks for data synchronization"
+  - IMPORTED PRIVILEGES ON SNOWFLAKE DB:
+      description: "To access account_usage views for monitoring"
+  - CREATE STORAGE INTEGRATION:
+      description: "To set up storage integration for project files"
+  - CREATE SCHEMA:
+      description: "To create pa_core and pa_code schemas"
+  - USAGE ON WAREHOUSE:
+      description: "To execute queries on the assigned warehouse"
+  - MONITOR ON WAREHOUSE:
+      description: "To monitor query performance and resource usage"
+
+references:
+  - project_storage:
+      label: "Project Storage"
+      description: "Storage integration for project files and documents"
+      privileges:
+        - USAGE
+      object_type: STORAGE_INTEGRATION
+      register_callback: config.register_storage
+      configuration_callback: config.get_storage_configuration
+      required_at_setup: true
+  - project_warehouse:
+      label: "Project Warehouse"
+      description: "Warehouse for executing project queries"
+      privileges:
+        - USAGE
+        - MONITOR
+      object_type: WAREHOUSE
+      register_callback: config.register_warehouse
+      required_at_setup: true
+  - project_database:
+      label: "Project Database"
+      description: "Database for storing project data"
+      privileges:
+        - USAGE
+        - CREATE SCHEMA
+        - MODIFY
+      object_type: DATABASE
+      register_callback: config.register_database
+      required_at_setup: true

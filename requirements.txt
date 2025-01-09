@@ -1,28 +1,28 @@
-streamlit>=1.40.1
-pyaudio>=0.2.14
-crewai>=0.80.0
-git+https://github.com/SWivid/F5-TTS.git
-python-json-logger>=2.0.7
-fire>=0.7.0
-pytest>=8.0.0
-black>=24.1.1
-pylint>=3.0.3
-SoundCard>=0.4.3
-PyAudio>=0.2.14
-numpy>=1.24.0
-pyperclip>=1.9.0
-sounddevice>=0.5.1
-fire>=0.4.0
-keyboard>=0.13.5
-faster-whisper>=1.1.0
-pyannote.audio>=3.3.2
-transformers>=4.46.3
-torch>=2.2.0
-torchaudio>=2.2.0
-nltk>=3.9.1
-scipy>=1.14.1
-soundfile>=0.12.1
-fire>=0.7.0
-atlassian-python-api>=3.41.16
+# Core dependencies
 python-slugify>=8.0.4
-slack-sdk>=3.33.5
+PyYAML>=6.0.1
+jsonschema>=4.19.1
+
+# Snowflake dependencies
+snowflake-snowpark-python>=1.26.0
+snowflake-connector-python>=3.12.4
+
+# Audio processing
+sounddevice>=0.5.1
+soundfile>=0.12.1
+numpy>=1.24.0
+faster-whisper>=1.1.0
+
+# AI/LLM
+boto3>=1.35.95
+langchain>=0.3.14
+
+# Web fetching
+beautifulsoup4>=4.12.3
+requests>=2.32.3
+
+# Jira & Confluence integration
+atlassian-python-api>=3.41.16
+
+# Streamlit UI
+streamlit>=1.41.1
