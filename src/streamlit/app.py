@@ -93,11 +93,15 @@ class MeetingAssistantApp:
             if not projects:
                 st.sidebar.warning("No projects available. Please create a project first.")
                 
-                if self.metadata_manager.is_admin:
-                    if st.sidebar.button("Create First Project"):
-                        st.session_state.selected_page = "Project Settings"
-                        return render_project_config_page
-                return None
+            
+            # Add Create Project button for admins when projects exist
+            if self.metadata_manager.is_admin:
+                if st.sidebar.button("Create New Project"):
+                    st.session_state.selected_page = "Project Settings"
+                    # Clear selected project to show creation form
+                    if 'selected_project' in st.session_state:
+                        del st.session_state.selected_project
+                    return render_project_config_page
             
             selected_project_key = st.sidebar.selectbox(
                 "Select Project",
@@ -153,7 +157,7 @@ class MeetingAssistantApp:
             page_renderer = self.setup_sidebar()
             
             # Render selected page if project is selected
-            if page_renderer and 'selected_project' in st.session_state:
+            if page_renderer:
                 # Pass metadata manager to page renderer
                 page_renderer()
             elif not self.metadata_manager.is_admin:
