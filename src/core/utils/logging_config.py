@@ -97,6 +97,16 @@ def setup_logging():
                 "handlers": ["audit_file"],
                 "level": "INFO",
                 "propagate": False
+            },
+            "snowflake.connector": {  # Snowflake connector logger
+                "handlers": ["console", "app_file", "error_file"],
+                "level": "INFO",
+                "propagate": False
+            },
+            "watchdog.observers": {  # Watchdog observers logger
+                "handlers": ["console", "app_file", "error_file"],
+                "level": "INFO",
+                "propagate": False
             }
         }
     }

@@ -22,7 +22,7 @@ SNOWFLAKE_CONFIG = {
     "user": os.getenv("SNOWFLAKE_USER"),
     "private_key_file": os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH"),
     "private_key_file_pwd": os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"),
-    "role": os.getenv("SNOWFLAKE_ROLE", "project_assistant_admin"),
+    "role": os.getenv("SNOWFLAKE_ROLE", "project_assistant_service"),
     "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE"),
     "database": os.getenv("SNOWFLAKE_DATABASE"),
     "schema": os.getenv("SNOWFLAKE_SCHEMA", "pa_core")

@@ -1,5 +1,6 @@
 """Unified metadata management system for the Meeting Assistant using Snowflake."""
 import logging
+from src.core.utils.logging_config import log_audit
 from datetime import datetime
 from typing import Dict, Optional, Any, List, Union
 import uuid
@@ -58,19 +59,34 @@ class UnifiedMetadataManager:
         Note:
             Accessible by both project_assistant_admin and project_assistant_service roles
         """
-        if not project_id:
-            # Get default project from first project found
-            df = self.projects_table.limit(1)
-            if df.count() == 0:
-                raise ValueError("No projects exist and no project ID provided")
-            project = df.collect()[0].as_dict()
-        else:
-            df = self.projects_table.filter(col("project_id") == project_id)
-            if df.count() == 0:
-                raise ValueError(f"Project not found: {project_id}")
-            project = df.collect()[0].as_dict()
+        try:
+            if not project_id:
+                # Get default project from first project found
+                logger.debug("Getting first available project")
+                df = self.projects_table.limit(1)
+                if df.count() == 0:
+                    error_msg = "No projects exist and no project ID provided"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                project = df.collect()[0].as_dict()
+                logger.debug(f"Found default project: {project['project_id']}")
+            else:
+                logger.debug(f"Getting project: {project_id}")
+                df = self.projects_table.filter(col("project_id") == project_id)
+                if df.count() == 0:
+                    error_msg = f"Project not found: {project_id}"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                project = df.collect()[0].as_dict()
+                logger.debug(f"Found project: {project_id}")
+                
+            return project
             
-        return project
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            logger.error(f"Failed to get project {project_id or 'default'}: {str(e)}")
+            raise
 
     def create_project(self, project_id: str, name: str, description: str = "", config: Dict = None):
         """Create a new project.
@@ -88,16 +104,41 @@ class UnifiedMetadataManager:
             raise PermissionError(
                 "Only project_assistant_admin role can create projects"
             )
-        project_data = {
-            "project_id": project_id,
-            "name": name,
-            "description": description,
-            "pinned_documents": [],
-            "config": config or {},
-            "created_at": current_timestamp(),
-            "updated_at": current_timestamp()
-        }
-        self.projects_table.insert([project_data])
+        try:
+            logger.info(f"Creating new project: {project_id}")
+            project_data = {
+                "project_id": project_id,
+                "name": name,
+                "description": description,
+                "pinned_documents": [],
+                "config": config or {},
+                "created_at": current_timestamp(),
+                "updated_at": current_timestamp()
+            }
+            logger.debug(f"Project data: {project_data}")
+            
+            # Verify project doesn't already exist
+            if self.projects_table.filter(col("project_id") == project_id).count() > 0:
+                raise ValueError(f"Project already exists: {project_id}")
+
+            # Execute insert operation
+            logger.debug("Executing insert operation")
+            result = self.projects_table.insert([project_data])
+            logger.info(f"Project {project_id} created successfully")
+            logger.debug(f"Insert result: {result}")
+            
+            log_audit(
+                "PROJECT_CREATED",
+                {
+                    "project_id": project_id,
+                    "name": name,
+                    "description": description
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to create project {project_id}: {str(e)}")
+            raise
 
     def update_project(self, project_id: str, updates: Dict):
         """Update project metadata.
@@ -119,11 +160,30 @@ class UnifiedMetadataManager:
         if self.projects_table.filter(col("project_id") == project_id).count() == 0:
             raise ValueError(f"Project not found: {project_id}")
             
-        updates["updated_at"] = current_timestamp()
-        self.projects_table.update(
-            updates,
-            col("project_id") == project_id
-        )
+        try:
+            logger.info(f"Updating project: {project_id}")
+            logger.debug(f"Update data: {updates}")
+            
+            updates["updated_at"] = current_timestamp()
+            result = self.projects_table.update(
+                updates,
+                col("project_id") == project_id
+            )
+            
+            logger.info(f"Project {project_id} updated successfully")
+            logger.debug(f"Update result: {result}")
+            
+            log_audit(
+                "PROJECT_UPDATED",
+                {
+                    "project_id": project_id,
+                    "updates": updates
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to update project {project_id}: {str(e)}")
+            raise
 
     def get_content_metadata(
         self,
@@ -144,16 +204,25 @@ class UnifiedMetadataManager:
         Note:
             Accessible by both project_assistant_admin and project_assistant_service roles
         """
-        df = self.documents_table.filter(
-            (col("project_id") == project_id) &
-            (col("source_type") == source_type) &
-            (col("content_id") == content_id)
-        )
-        
-        if df.count() == 0:
-            return None
+        try:
+            logger.debug(f"Getting content metadata: {content_id} ({source_type}) from project {project_id}")
+            df = self.documents_table.filter(
+                (col("project_id") == project_id) &
+                (col("source_type") == source_type) &
+                (col("content_id") == content_id)
+            )
             
-        return df.collect()[0].as_dict()
+            if df.count() == 0:
+                logger.debug(f"Content {content_id} not found in project {project_id}")
+                return None
+                
+            result = df.collect()[0].as_dict()
+            logger.debug(f"Found content: {content_id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to get content metadata for {content_id} in project {project_id}: {str(e)}")
+            raise
 
     def update_content_metadata(
         self,
@@ -197,6 +266,14 @@ class UnifiedMetadataManager:
         }
         
         if df.count() == 0:
+            # Verify document doesn't already exist
+            if self.documents_table.filter(
+                (col("content_id") == content_id) &
+                (col("project_id") == project_id) &
+                (col("source_type") == source_type)
+            ).count() > 0:
+                raise ValueError(f"Document already exists: {content_id} in project {project_id}")
+                
             # Insert new record
             insert_data = {
                 "content_id": content_id,
@@ -206,14 +283,47 @@ class UnifiedMetadataManager:
                 "content_hash": metadata.get("content_hash"),
                 **update_data
             }
-            self.documents_table.insert([insert_data])
+            logger.debug("Executing insert operation")
+            try:
+                result = self.documents_table.insert([insert_data])
+                logger.info(f"Document {content_id} created successfully in project {project_id}")
+                logger.debug(f"Insert result: {result}")
+                
+                log_audit(
+                    "DOCUMENT_CREATED",
+                    {
+                        "project_id": project_id,
+                        "content_id": content_id,
+                        "source_type": source_type,
+                        "title": metadata.get("title")
+                    }
+                )
+            except Exception as e:
+                if "foreign key constraint" in str(e).lower():
+                    error_msg = f"Project {project_id} does not exist"
+                    logger.error(f"Failed to create document: {error_msg}")
+                    raise ValueError(error_msg) from e
+                logger.error(f"Failed to create document {content_id} in project {project_id}: {str(e)}")
+                raise
         else:
             # Update existing record
-            self.documents_table.update(
+            logger.debug("Executing update operation")
+            result = self.documents_table.update(
                 update_data,
                 (col("project_id") == project_id) &
                 (col("source_type") == source_type) &
                 (col("content_id") == content_id)
+            )
+            logger.debug(f"Update result: {result}")
+            
+            log_audit(
+                "DOCUMENT_UPDATED",
+                {
+                    "project_id": project_id,
+                    "content_id": content_id,
+                    "source_type": source_type,
+                    "version": update_data["version"]
+                }
             )
 
     def should_process_content(
@@ -238,17 +348,27 @@ class UnifiedMetadataManager:
             Accessible by both project_assistant_admin and project_assistant_service roles
             Returns True if content does not exist or if any tracked fields have changed
         """
-        stored_metadata = self.get_content_metadata(project_id, source_type, content_id)
-        
-        if not stored_metadata:
-            return True
-        
-        for key in ['content_hash', 'version', 'last_updated']:
-            if key in current_metadata:
-                if key not in stored_metadata or stored_metadata[key] != current_metadata[key]:
-                    return True
-        
-        return False
+        try:
+            logger.debug(f"Checking if content needs processing: {content_id} ({source_type}) in project {project_id}")
+            stored_metadata = self.get_content_metadata(project_id, source_type, content_id)
+            
+            if not stored_metadata:
+                logger.debug(f"Content {content_id} not found, needs processing")
+                return True
+            
+            logger.debug("Comparing metadata fields")
+            for key in ['content_hash', 'version', 'last_updated']:
+                if key in current_metadata:
+                    if key not in stored_metadata or stored_metadata[key] != current_metadata[key]:
+                        logger.debug(f"Field '{key}' changed, needs processing")
+                        return True
+            
+            logger.debug("No changes detected, processing not needed")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to check processing status for {content_id} in project {project_id}: {str(e)}")
+            raise
 
     def generate_meeting_id(self, title: str) -> str:
         """Generate unique meeting ID based on current date and slugified title.
@@ -307,6 +427,10 @@ class UnifiedMetadataManager:
         }
         
         if df.count() == 0:
+            # Verify meeting doesn't already exist
+            if self.meetings_table.filter(col("meeting_id") == meeting_id).count() > 0:
+                raise ValueError(f"Meeting already exists: {meeting_id}")
+                
             # Insert new record
             insert_data = {
                 "meeting_id": meeting_id,
@@ -314,13 +438,44 @@ class UnifiedMetadataManager:
                 "title": metadata.get("title"),
                 **update_data
             }
-            self.meetings_table.insert([insert_data])
+            try:
+                logger.debug("Executing insert operation")
+                result = self.meetings_table.insert([insert_data])
+                logger.info(f"Meeting {meeting_id} created successfully")
+                logger.debug(f"Insert result: {result}")
+                
+                log_audit(
+                    "MEETING_CREATED",
+                    {
+                        "project_id": project_id,
+                        "meeting_id": meeting_id,
+                        "title": metadata.get("title"),
+                        "status": "in_progress"
+                    }
+                )
+            except Exception as e:
+                if "foreign key constraint" in str(e).lower():
+                    error_msg = f"Project {project_id} does not exist"
+                    logger.error(f"Failed to create meeting: {error_msg}")
+                    raise ValueError(error_msg) from e
+                logger.error(f"Failed to create meeting {meeting_id} in project {project_id}: {str(e)}")
+                raise
         else:
             # Update existing record
-            self.meetings_table.update(
+            result = self.meetings_table.update(
                 update_data,
                 (col("project_id") == project_id) &
                 (col("meeting_id") == meeting_id)
+            )
+            logger.debug(f"Update result: {result}")
+            
+            log_audit(
+                "MEETING_UPDATED",
+                {
+                    "project_id": project_id,
+                    "meeting_id": meeting_id,
+                    "status": update_data["status"]
+                }
             )
 
     def get_meeting_metadata(
@@ -349,18 +504,30 @@ class UnifiedMetadataManager:
             >>> get_meeting_metadata("project1")
             {'20240315_daily_standup': {...}, '20240316_sprint_planning': {...}}
         """
-        if meeting_id:
-            df = self.meetings_table.filter(
-                (col("project_id") == project_id) &
-                (col("meeting_id") == meeting_id)
-            )
-            if df.count() == 0:
-                return {}
-            return df.collect()[0].as_dict()
-        else:
-            # Return all meetings for project
-            df = self.meetings_table.filter(col("project_id") == project_id)
-            return {row["meeting_id"]: row.as_dict() for row in df.collect()}
+        try:
+            if meeting_id:
+                logger.debug(f"Getting meeting {meeting_id} from project {project_id}")
+                df = self.meetings_table.filter(
+                    (col("project_id") == project_id) &
+                    (col("meeting_id") == meeting_id)
+                )
+                if df.count() == 0:
+                    logger.debug(f"Meeting {meeting_id} not found in project {project_id}")
+                    return {}
+                result = df.collect()[0].as_dict()
+                logger.debug(f"Found meeting: {meeting_id}")
+                return result
+            else:
+                # Return all meetings for project
+                logger.debug(f"Getting all meetings for project {project_id}")
+                df = self.meetings_table.filter(col("project_id") == project_id)
+                result = {row["meeting_id"]: row.as_dict() for row in df.collect()}
+                logger.debug(f"Found {len(result)} meetings")
+                return result
+                
+        except Exception as e:
+            logger.error(f"Failed to get meeting metadata for project {project_id}: {str(e)}")
+            raise
 
     def delete_meeting(self, project_id: str, meeting_id: str, backup: bool = True):
         """Delete meeting data.
@@ -388,7 +555,7 @@ class UnifiedMetadataManager:
             
         if backup:
             # Soft delete
-            self.meetings_table.update(
+            result = self.meetings_table.update(
                 {
                     "status": "deleted",
                     "updated_at": current_timestamp()
@@ -396,11 +563,31 @@ class UnifiedMetadataManager:
                 (col("project_id") == project_id) &
                 (col("meeting_id") == meeting_id)
             )
+            logger.debug(f"Soft delete result: {result}")
+            
+            log_audit(
+                "MEETING_DELETED",
+                {
+                    "project_id": project_id,
+                    "meeting_id": meeting_id,
+                    "hard_delete": False
+                }
+            )
         else:
             # Hard delete if explicitly requested
-            self.meetings_table.delete(
+            result = self.meetings_table.delete(
                 (col("project_id") == project_id) &
                 (col("meeting_id") == meeting_id)
+            )
+            logger.debug(f"Delete result: {result}")
+            
+            log_audit(
+                "MEETING_DELETED",
+                {
+                    "project_id": project_id,
+                    "meeting_id": meeting_id,
+                    "hard_delete": True
+                }
             )
 
     def pin_document(self, project_id: str, content_id: str, source_type: str):
@@ -432,8 +619,21 @@ class UnifiedMetadataManager:
         doc_ref = f"{source_type}:{content_id}"
         
         if doc_ref not in pinned_docs:
-            pinned_docs.append(doc_ref)
-            self.update_project(project_id, {"pinned_documents": pinned_docs})
+            try:
+                pinned_docs.append(doc_ref)
+                self.update_project(project_id, {"pinned_documents": pinned_docs})
+            except Exception as e:
+                logger.error(f"Failed to pin document {content_id} to project {project_id}: {str(e)}")
+                raise
+            
+            log_audit(
+                "DOCUMENT_PINNED",
+                {
+                    "project_id": project_id,
+                    "content_id": content_id,
+                    "source_type": source_type
+                }
+            )
 
     def unpin_document(self, project_id: str, content_id: str, source_type: str):
         """Unpin a document from a project.
@@ -464,5 +664,18 @@ class UnifiedMetadataManager:
         doc_ref = f"{source_type}:{content_id}"
         
         if doc_ref in pinned_docs:
-            pinned_docs.remove(doc_ref)
-            self.update_project(project_id, {"pinned_documents": pinned_docs})
+            try:
+                pinned_docs.remove(doc_ref)
+                self.update_project(project_id, {"pinned_documents": pinned_docs})
+            except Exception as e:
+                logger.error(f"Failed to unpin document {content_id} from project {project_id}: {str(e)}")
+                raise
+            
+            log_audit(
+                "DOCUMENT_UNPINNED",
+                {
+                    "project_id": project_id,
+                    "content_id": content_id,
+                    "source_type": source_type
+                }
+            )

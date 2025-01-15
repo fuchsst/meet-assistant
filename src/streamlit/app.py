@@ -1,11 +1,15 @@
 import streamlit as st
+import logging
 
 from src.core.storage.metadata_manager import UnifiedMetadataManager
+from src.core.utils.logging_config import setup_logging
 from src.streamlit.components.meetings import render_meetings_page
 from src.streamlit.components.tickets import render_tickets_page
 from src.streamlit.components.documents import render_documents_page
 from src.streamlit.components.chats import render_chats_page
 from src.streamlit.components.project_config import render_project_config_page
+
+logger = logging.getLogger(__name__)
 
 class MeetingAssistantApp:
     """Streamlit interface for the Meeting Assistant."""
@@ -18,6 +22,7 @@ class MeetingAssistantApp:
         try:
             from config.config import get_snowflake_session
             
+            logger.info("Initializing Snowflake session...")
             # Get or create Snowflake session
             session = get_snowflake_session()
             
@@ -27,8 +32,10 @@ class MeetingAssistantApp:
             # Store in session state for page access
             if 'metadata_manager' not in st.session_state:
                 st.session_state.metadata_manager = self.metadata_manager
+                logger.info("Metadata manager initialized and stored in session state")
                 
         except Exception as e:
+            logger.error(f"Failed to initialize Snowflake connection: {str(e)}")
             st.error(f"Failed to initialize Snowflake connection: {str(e)}")
             st.stop()
         
@@ -48,16 +55,21 @@ class MeetingAssistantApp:
             list: List of project dictionaries with project_id and name
         """
         try:
+            logger.info("Checking database connection...")
             # Get first project to check access
             project = self.metadata_manager.get_project()
             if not project:
+                logger.info("No projects found in initial check")
                 return []
                 
             # Get all projects by listing them
+            logger.info("Fetching all projects...")
             projects = []
             df = self.metadata_manager.projects_table.select(
                 ["project_id", "name", "description"]
             ).collect()
+            
+            logger.info(f"Found {len(df)} projects")
             
             for row in df:
                 projects.append({
@@ -70,10 +82,13 @@ class MeetingAssistantApp:
             
         except ValueError as e:
             if "No projects exist" in str(e):
+                logger.info("No projects exist in database")
                 return []
+            logger.error(f"Error loading projects: {str(e)}")
             st.error(f"Error loading projects: {str(e)}")
             return []
         except Exception as e:
+            logger.error(f"Error loading projects: {str(e)}")
             st.error(f"Error loading projects: {str(e)}")
             return []
     
@@ -97,6 +112,7 @@ class MeetingAssistantApp:
             # Add Create Project button for admins when projects exist
             if self.metadata_manager.is_admin:
                 if st.sidebar.button("Create New Project"):
+                    logger.info("Create New Project button clicked")
                     st.session_state.selected_page = "Project Settings"
                     # Clear selected project to show creation form
                     if 'selected_project' in st.session_state:
@@ -110,6 +126,7 @@ class MeetingAssistantApp:
             )
             
             if selected_project_key:
+                logger.info(f"Selected project: {selected_project_key}")
                 # Get full project details
                 project = self.metadata_manager.get_project(selected_project_key)
                 
@@ -139,12 +156,14 @@ class MeetingAssistantApp:
                     index=list(pages.keys()).index(st.session_state.selected_page)
                 )
                 st.session_state.selected_page = selected_page
+                logger.info(f"Selected page: {selected_page}")
                 
                 return pages[selected_page]
             
             return None
             
         except Exception as e:
+            logger.error(f"Error setting up navigation: {str(e)}")
             st.sidebar.error(f"Error setting up navigation: {str(e)}")
             return None
     
@@ -164,9 +183,15 @@ class MeetingAssistantApp:
                 st.info("Please select a project to continue")
             
         except Exception as e:
+            logger.error(f"Application error: {str(e)}")
             st.error(f"Application error: {str(e)}")
             st.error("Please try refreshing the page or contact support if the error persists.")
 
 if __name__ == "__main__":
+    # Initialize logging
+    setup_logging()
+    logger.info("Starting Meeting Assistant application")
+    
+    # Start application
     app = MeetingAssistantApp()
     app.main()

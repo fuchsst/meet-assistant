@@ -14,7 +14,7 @@ GRANT USAGE ON SCHEMA pa_core TO APPLICATION ROLE project_assistant_admin;
 GRANT USAGE ON SCHEMA pa_core TO APPLICATION ROLE project_assistant_service;
 
 -- Create tables for metadata storage
-CREATE OR REPLACE TABLE pa_core.projects (
+CREATE OR REPLACE HYBRID TABLE pa_core.projects (
     project_id VARCHAR NOT NULL,
     name VARCHAR,
     description VARCHAR,
@@ -25,7 +25,7 @@ CREATE OR REPLACE TABLE pa_core.projects (
     PRIMARY KEY (project_id)
 );
 
-CREATE OR REPLACE TABLE pa_core.meetings (
+CREATE OR REPLACE HYBRID TABLE pa_core.meetings (
     meeting_id VARCHAR NOT NULL,
     project_id VARCHAR NOT NULL,
     title VARCHAR,
@@ -39,7 +39,7 @@ CREATE OR REPLACE TABLE pa_core.meetings (
     FOREIGN KEY (project_id) REFERENCES pa_core.projects(project_id)
 );
 
-CREATE OR REPLACE TABLE pa_core.documents (
+CREATE OR REPLACE HYBRID TABLE pa_core.documents (
     content_id VARCHAR NOT NULL,
     project_id VARCHAR NOT NULL,
     source_type VARCHAR NOT NULL,
